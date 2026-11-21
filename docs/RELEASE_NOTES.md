@@ -1,14 +1,18 @@
-# JetVideo 1.0.0 · v4.3.0
-
 JetVideo is a portable Windows application for splitting videos, adding timed banners, and scheduling TikTok posts through Buffer and Cloudflare R2.
 
 ## Download and start
 
-1. Download **JetVideo-1.0.0-Windows-x64.zip** and extract the whole archive into a writable folder.
-2. Open **JetVideo.exe** on Windows 10 or 11 x64. The ZIP includes Python, FFmpeg and FFprobe. Keep its contents together.
-3. For editing, open **Video Editor**. To schedule posts, go to **Publishing → Connections** and use the **?** buttons to set up your own Buffer key and Cloudflare R2 bucket. Then link a TikTok channel under **Accounts**.
+1. [Download JetVideo for Windows](https://github.com/DaniloAdmin/JetVideo/releases/download/v4.3.0/JetVideo-1.0.0-Windows-x64.zip) and extract the entire ZIP into a folder you can write to.
+2. Open `JetVideo.exe` on Windows 10 or 11 (64-bit). The ZIP contains Python, FFmpeg and FFprobe.
+3. To split videos or add banners, open **Video Editor**. To schedule TikTok posts, add your own Buffer key and Cloudflare R2 details in **Publishing → Connections** and link your TikTok channel under **Accounts**. Click **?** beside a field for illustrated setup instructions.
 
-This release includes per-part captions and hashtags, searchable time zones, illustrated setup guides with zoom, English/Russian/Ukrainian localization, and Windows keyboard shortcuts across the tested layouts.
+## Features
+
+- Split long videos into numbered clips of a chosen duration, with optional timed banners.
+- Set captions, hashtags and publishing windows for each TikTok profile. Review the queue and posting history in JetVideo.
+- Switch between English, Ukrainian and Russian, and open illustrated help with **F1**.
+
+[English guide](https://github.com/DaniloAdmin/JetVideo/blob/main/README.md) · [Українська](https://github.com/DaniloAdmin/JetVideo/blob/main/README.uk.md) · [Русский](https://github.com/DaniloAdmin/JetVideo/blob/main/README.ru.md)
 
 ## License and sources
 

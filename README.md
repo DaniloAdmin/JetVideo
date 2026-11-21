@@ -2,7 +2,16 @@
 
 [English](README.md) · [Українська](README.uk.md) · [Русский](README.ru.md)
 
-JetVideo splits videos, adds banners and schedules TikTok posts. Video editing runs locally with FFmpeg. Scheduling uses Buffer and Cloudflare R2.
+**JetVideo turns long videos into numbered clips, adds timed banners, and schedules TikTok posts.** Use the built-in editor on its own or send your finished clips to a publishing queue.
+
+**[Download JetVideo 1.0.0 for Windows](https://github.com/DaniloAdmin/JetVideo/releases/download/v4.3.0/JetVideo-1.0.0-Windows-x64.zip)** · [Release notes, checksums and source archives](https://github.com/DaniloAdmin/JetVideo/releases/tag/v4.3.0)
+
+Extract the entire ZIP and open `JetVideo.exe` on Windows 10 or 11 (64-bit). Python, FFmpeg and FFprobe are included. The app and its illustrated help are available in English, Ukrainian and Russian.
+
+| What you want to do | What JetVideo offers |
+| --- | --- |
+| Edit videos on your PC | Split videos by duration, name clips `Part 1`, `Part 2` and so on, and optionally add an image or video banner at a chosen time in each clip. No account setup is needed for editing. |
+| Schedule TikTok posts | Queue clips for connected TikTok channels, choose publishing windows and time zones, add captions and hashtags, and review posting history. You'll need your own Buffer account with a connected TikTok channel and a Cloudflare R2 bucket. |
 
 ## Quick start
 
@@ -118,7 +127,7 @@ Go to **Sync** → **Check all accounts** to compare saved posts with Buffer. Re
 
 ## Data, logs and updates
 
-JetVideo keeps the workspace location and language in `%LOCALAPPDATA%\JOJO BOT` for compatibility with previous versions. The default workspace is the `data` subfolder. Processing and publishing have separate logs. Editor preferences are stored in `%APPDATA%\VideoAdInserter\preferences.json` to support existing installations.
+The portable ZIP keeps its settings in `JetVideo Data` beside the EXE, with `data` as the default workspace. Processing and publishing have separate logs. Builds without the portable marker use `%LOCALAPPDATA%\JOJO BOT` and `%APPDATA%\VideoAdInserter` for compatibility with previous versions.
 
 Before replacing the EXE, stop WATCH, close the app and back up your workspace and editor preferences. Use **Activity log** → **Connect folder** to reconnect an existing workspace. **Move to another drive** copies the workspace and keeps the original folder. Keep the `tools` folder beside the updated EXE.
 
