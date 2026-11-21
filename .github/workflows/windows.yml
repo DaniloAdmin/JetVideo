@@ -24,10 +24,18 @@ jobs:
           python -m PyInstaller --noconfirm --clean JetVideo.spec
       - name: Empty settings smoke check
         shell: pwsh
+        timeout-minutes: 3
         run: |
-          $p = Start-Process -FilePath '.\dist\JetVideo.exe' -ArgumentList '--smoke-test verification/frozen-smoke.json' -Wait -PassThru
-          if ($p.ExitCode -ne 0) { throw 'Smoke check failed' }
-          if (-not (Get-Content verification/frozen-smoke.json -Raw | ConvertFrom-Json).ok) { throw 'No successful smoke report' }
+          $report = 'verification/frozen-smoke.json'
+          $p = Start-Process -FilePath '.\dist\JetVideo.exe' -ArgumentList "--smoke-test $report" -Wait -PassThru
+          if ($p.ExitCode -ne 0) {
+            $errorReport = [IO.Path]::ChangeExtension($report, '.error.txt')
+            if (Test-Path -LiteralPath $errorReport) {
+              Get-Content -Raw -Encoding utf8 -LiteralPath $errorReport
+            }
+            throw "Smoke check failed with exit code $($p.ExitCode)"
+          }
+          if (-not (Get-Content -Raw -Encoding utf8 -LiteralPath $report | ConvertFrom-Json).ok) { throw 'No successful smoke report' }
       - uses: actions/upload-artifact@v4
         with:
           name: JetVideo-Windows-x64

@@ -341,19 +341,22 @@ class Studio(tk.Tk):
 
 def main():
     import sys
-    if '--portable-test' in sys.argv:
+    if '--portable-test' in sys.argv or '--smoke-test' in sys.argv:
         import traceback
-        from smoke_test import check_portable_release
-        report = Path(sys.argv[sys.argv.index('--portable-test') + 1])
+        from smoke_test import check_portable_release, run
+
+        portable = '--portable-test' in sys.argv
+        option = '--portable-test' if portable else '--smoke-test'
+        report = Path(sys.argv[sys.argv.index(option) + 1])
         try:
-            check_portable_release(report)
+            if portable:
+                check_portable_release(report)
+            else:
+                run(report, hold='--hold' in sys.argv)
         except Exception:
+            report.parent.mkdir(parents=True, exist_ok=True)
             report.with_suffix('.error.txt').write_text(traceback.format_exc(), encoding='utf-8')
             raise SystemExit(1)
-        return
-    if '--smoke-test' in sys.argv:
-        from smoke_test import run
-        run(Path(sys.argv[sys.argv.index('--smoke-test') + 1]), hold='--hold' in sys.argv)
         return
     try:
         options = {}
