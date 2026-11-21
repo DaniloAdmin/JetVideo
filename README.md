@@ -13,6 +13,8 @@ Extract the entire ZIP and open `JetVideo.exe` on Windows 10 or 11 (64-bit). Pyt
 | Edit videos on your PC | Split videos by duration, name clips `Part 1`, `Part 2` and so on, and optionally add an image or video banner at a chosen time in each clip. No account setup is needed for editing. |
 | Schedule TikTok posts | Queue clips for connected TikTok channels, choose publishing windows and time zones, add captions and hashtags, and review posting history. You'll need your own Buffer account with a connected TikTok channel and a Cloudflare R2 bucket. |
 
+**Cloudflare R2 for TikTok publishing.** R2 Standard includes 10 GB of storage throughout the month and a monthly allowance of requests at no charge. To activate R2, add a supported bank card or another accepted payment method in Cloudflare. Cloudflare charges for storage or requests above the free limits. [R2 pricing](https://developers.cloudflare.com/r2/pricing/#free-tier) · [Cloudflare payment methods](https://developers.cloudflare.com/billing/get-started/create-billing-profile/)
+
 ## Quick start
 
 **Split a video.** Open **Video Editor** and click **Add videos**. Select **Split into parts**. For two-minute clips, use `00:02:00` and `Part {part}`. Choose an output folder and click **Start splitting**.
