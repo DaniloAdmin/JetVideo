@@ -1,0 +1,35 @@
+{
+  "videos_folder": "ready",
+  "scheduled_folder": "scheduled",
+  "posted_folder": "posted",
+  "target_tiktok_channel": "",
+  "target_tiktok_channel_id": "",
+  "buffer_organization_name": "",
+  "buffer_organization_id": "",
+  "max_queue_posts": 10,
+  "watch_interval_minutes": 5,
+  "file_stable_seconds": 15,
+  "thumbnail_offset_ms": 1000,
+  "episode_ranges": [],
+  "default_episode": null,
+  "cleanup_r2_after_sent": true,
+  "timezone": "Europe/Kyiv",
+  "minimum_schedule_lead_minutes": 15,
+  "daily_windows": [
+    {
+      "start": "11:00",
+      "end": "12:00"
+    },
+    {
+      "start": "19:00",
+      "end": "20:00"
+    }
+  ],
+  "caption_templates": [
+    "{filename}\n\n{hashtags}"
+  ],
+  "hashtag_sets": [
+    []
+  ],
+  "part_overrides": {}
+}
