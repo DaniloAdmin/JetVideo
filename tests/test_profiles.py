@@ -34,7 +34,7 @@ def test_legacy_adoption_preserves_all_data(workspace):
     assert app.read_json(workspace / 'state.json', {}) == state
     assert (workspace / 'posted' / '180.mp4').read_bytes() == b'old'
     assert app.read_json(workspace / 'profiles.json', {})['profiles'][0]['folder'] == '.'
-    assert '.env' not in (workspace / 'profiles.json').read_text()
+    assert '.env' not in (workspace / 'profiles.json').read_text(encoding='utf-8')
 
 
 def test_profile_creation_separate_settings_history_files_and_names(workspace):
