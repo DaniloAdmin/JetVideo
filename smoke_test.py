@@ -188,11 +188,14 @@ def check_guide_screenshots(app, guide):
     guide.geometry('560x460+10+10')
     settle()
     small_width = button.photo.width()
-    assert 440 < small_width < guide.text.winfo_width()
+    small_viewport = guide.text.winfo_width()
+    assert 0 < small_width < small_viewport
     guide.geometry('1200x760+10+10')
     settle()
-    assert 1000 < button.photo.width() < guide.text.winfo_width()
-    assert button.photo.width() > small_width
+    wide_width = button.photo.width()
+    wide_viewport = guide.text.winfo_width()
+    assert small_width < wide_width < wide_viewport
+    assert wide_width - small_width == wide_viewport - small_viewport
     guide.text.see(str(button))
     app.update()
     assert button.winfo_viewable()
