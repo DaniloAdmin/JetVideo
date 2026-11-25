@@ -12,6 +12,7 @@
 | urllib3, idna, charset-normalizer, six, jmespath | MIT / BSD. Точные условия в соответствующих файлах. |
 | certifi | MPL-2.0 для пакета сертификатов |
 | Pillow | MIT-CMU. Лицензии включённых библиотек, в том числе FreeType, приведены в `third_party/pillow/LICENSE`. |
+| Inter, Montserrat, Noto Sans, Roboto Condensed | SIL Open Font License 1.1. Лицензии и уведомления находятся в `third_party/fonts`. |
 | CPython 3.14.10 | PSF и уведомления сторонних компонентов в `third_party/Python-LICENSE.txt` |
 | Tcl/Tk 9.0.4 | Лицензии Tcl и Tk в `third_party` |
 | PyInstaller | GPL с исключением для созданных приложений; отдельные файлы Apache-2.0 |
@@ -21,7 +22,11 @@
 
 ## FFmpeg / FFprobe
 
-JetVideo запускает комплектные FFmpeg и FFprobe 9.1 из папки `tools` отдельными процессами. Для релиза они собраны из исходников под GPL версии 3 или новее. Точные исходники, конфигурация и скрипт сборки поставляются отдельным архивом `FFmpeg-JetVideo-v4.3.0-source.zip`. [Уведомления FFmpeg](third_party/ffmpeg/NOTICE.md)
+JetVideo запускает комплектные FFmpeg и FFprobe 9.1 из папки `tools` отдельными процессами. Для релиза они собраны из исходников под GPL версии 3 или новее. Исходники, конфигурация и скрипт сборки поставляются архивом `FFmpeg-JetVideo-v1.1.0-source.zip`. [Уведомления FFmpeg](third_party/ffmpeg/NOTICE.md)
+
+## Автосубтитры
+
+Автосубтитры обрабатываются на компьютере отдельным процессом whisper.cpp b5907 с моделью Whisper Base. Режим «Только речь» использует Silero VAD v5.1.2. Лицензии MIT и сведения о точной сборке находятся рядом с файлами в `tools/whisper`. Исходники whisper.cpp и инструкции по сборке входят в `JetVideo-1.1.0-dependency-sources.zip`. [whisper.cpp](https://github.com/ggml-org/whisper.cpp/tree/b5907) · [OpenAI Whisper](https://github.com/openai/whisper) · [Silero VAD](https://github.com/snakers4/silero-vad/tree/v5.1.2)
 
 ## Материалы и сервисы
 

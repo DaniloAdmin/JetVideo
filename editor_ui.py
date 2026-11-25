@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 import json
 import os
 import queue
@@ -12,14 +13,16 @@ from pathlib import Path
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 from app_info import APP_NAME, PRODUCT_NAME, portable_home
+from guide_ui import bind_tooltip
 from i18n import file_types, localized_combobox, tr
+from ui_icons import icon
 
 from video_ad_inserter_core import (
     VideoAdInserter as OriginalInserter, VIDEO_TYPES, BANNER_TYPES,
     parse_time, prepare_insertions,
 )
 
-PREFERENCES_DIRECTORY = 'VideoAdInserter'
+PREFERENCES_DIRECTORY = 'JetVideo Modern Editor'
 BG = '#090E1A'
 PANEL = '#151E30'
 PANEL2 = '#1B2840'
@@ -33,6 +36,7 @@ GREEN = '#54D9A7'
 RED = '#FB8393'
 FONT = 'Segoe UI'
 MONO = 'Consolas'
+ON_ACCENT = '#101226'
 
 
 def preference_path() -> Path:
@@ -100,9 +104,11 @@ class ModernVideoAdInserter(OriginalInserter):
         self.cut_name = tk.StringVar(master=root, value=tr('часть {part}'))
         self.cut_start = tk.StringVar(master=root, value='1')
         self.cut_tail = tk.BooleanVar(master=root, value=True)
+        self.cut_fast = tk.BooleanVar(master=root, value=False)
         self.cut_banners = tk.StringVar(master=root, value='Без баннеров')
         self.export_mode = tk.StringVar(master=root, value='cut')
         self.settings_window = None
+        self.subtitle_editor = None
         self.tool_checks = queue.Queue()
         super().__init__(root)
         root.configure(bg=BG)
@@ -111,7 +117,8 @@ class ModernVideoAdInserter(OriginalInserter):
         for var in (self.banner_file, self.output_dir, self.insert_at, self.banner_mode,
                     self.fit_mode, self.key_color, self.key_similarity,
                     self.key_blend, self.crf, self.include_banner_audio, self.ffmpeg_path,
-                    self.cut_duration, self.cut_name, self.cut_start, self.cut_tail, self.cut_banners, self.export_mode):
+                    self.cut_duration, self.cut_name, self.cut_start, self.cut_tail,
+                    self.cut_fast, self.cut_banners, self.export_mode):
             var.trace_add('write', self._on_change)
         self._update_mode()
 
@@ -121,18 +128,42 @@ class ModernVideoAdInserter(OriginalInserter):
         shell.pack(fill='both', expand=True)
 
         header = tk.Frame(shell, bg=BG)
-        header.pack(fill='x', padx=24, pady=(13, 9))
-        self._label(header, tr('Подготовка видео'), 19, bold=True, bg=BG).pack(side='left')
-        self._btn(header, tr('Настройки'), self.show_settings).pack(side='right')
-        self._btn(header, tr('Журнал'), self.show_log).pack(side='right', padx=8)
+        header.pack(fill='x', padx=22, pady=(10, 8))
+        self._label(header, tr('Подготовка видео'), 18, bold=True, bg=BG).pack(side='left')
+        self._menu_button(header, tr('Настройки'), (
+            (tr('Настройки монтажа'), self.show_settings),
+            (tr('Журнал обработки'), self.show_log),
+        ), glyph='settings').pack(side='right')
+        self.subtitle_btn = self._btn(header, tr('Субтитры'), self.show_subtitles, glyph='captions')
+        self.subtitle_btn.pack(side='right', padx=(0, 8))
 
         body = tk.Frame(shell, bg=BG)
-        body.pack(fill='both', expand=True, padx=24)
+        body.pack(fill='both', expand=True, padx=22)
         content = self._scroll_page(body)
-        self._build_sources(content)
-        self._build_export_mode(content)
+        work = tk.Frame(content, bg=BG)
+        work.pack(fill='x', pady=(0, 10))
+        self.source_card = self._build_sources(work)
+        self.options_card = self._build_export_mode(work)
+        self.source_card.grid(row=0, column=0, sticky='nsew', padx=(0, 10))
+        self.options_card.grid(row=0, column=1, sticky='nsew')
+        work.columnconfigure(0, weight=4, uniform='work')
+        work.columnconfigure(1, weight=6, uniform='work')
+        stacked = False
+
+        def reflow(event):
+            nonlocal stacked
+            compact = event.width < 800
+            if compact == stacked:
+                return
+            stacked = compact
+            self.source_card.grid_configure(padx=0 if compact else (0, 10), pady=(0, 10) if compact else 0)
+            self.options_card.grid_configure(row=int(compact), column=int(not compact))
+            work.columnconfigure(0, weight=1 if compact else 4, uniform='' if compact else 'work')
+            work.columnconfigure(1, weight=0 if compact else 6, uniform='' if compact else 'work')
+
+        work.bind('<Configure>', reflow)
         self._build_inserts(content)
-        self._build_export_footer(shell)
+        self._build_export_footer(shell, body)
 
         self.log_window = self._dialog(tr('Журнал обработки'), 760, 520)
         self._build_logs(self.log_window)
@@ -164,6 +195,14 @@ class ModernVideoAdInserter(OriginalInserter):
     def show_log(self):
         self._show_dialog(self.log_window)
 
+    def show_subtitles(self):
+        if self.busy:
+            return
+        if self.subtitle_editor is None:
+            from subtitle_ui import SubtitleEditor
+            self.subtitle_editor = SubtitleEditor(self)
+        self.subtitle_editor.show()
+
     def show_settings(self):
         if self.settings_window is None:
             self.settings_window = self._dialog(tr('Настройки монтажа'), 720, 690)
@@ -179,36 +218,70 @@ class ModernVideoAdInserter(OriginalInserter):
             pass
         style.configure('Ad.Horizontal.TProgressbar', troughcolor=PANEL2,
                         background=ACCENT, bordercolor=PANEL2, lightcolor=ACCENT,
-                        darkcolor=ACCENT, thickness=13)
+                        darkcolor=ACCENT, thickness=5)
         style.configure('Ad.TCombobox', padding=7, font=(FONT, 10), foreground=FG,
                         fieldbackground=PANEL2, background=PANEL2,
                         arrowcolor=FG, bordercolor=BORDER)
         style.map('Ad.TCombobox', fieldbackground=[('readonly', PANEL2)],
                   foreground=[('readonly', FG)], background=[('readonly', PANEL2)])
-        style.configure('Ad.Vertical.TScrollbar', troughcolor=PANEL, background=PANEL2,
-                        arrowcolor=MUTED, bordercolor=PANEL)
+        for name in ('Ad.TSpinbox', 'Ad.TEntry'):
+            style.configure(name, fieldbackground=PANEL2, background=PANEL2, foreground=FG,
+                            insertcolor=FG, bordercolor=BORDER, arrowcolor=MUTED, padding=4)
+        style.configure('Ad.TNotebook', background=PANEL, borderwidth=0, tabmargins=0)
+        style.configure('Ad.TNotebook.Tab', background=PANEL2, foreground=MUTED, borderwidth=0,
+                        padding=(10, 7), font=(FONT, 10, 'bold'))
+        style.map('Ad.TNotebook.Tab', background=[('selected', BORDER), ('active', BORDER)],
+                  foreground=[('selected', FG), ('active', FG)])
+        style.layout('Ad.Vertical.TScrollbar', [
+            ('Vertical.Scrollbar.trough', {'sticky': 'ns', 'children': [
+                ('Vertical.Scrollbar.thumb', {'expand': True, 'sticky': 'ns'}),
+            ]}),
+        ])
+        style.configure('Ad.Vertical.TScrollbar', troughcolor=BG, background=BORDER,
+                        bordercolor=BG, lightcolor=BORDER, darkcolor=BORDER, gripcount=0, width=8)
         self.root.option_add('*TCombobox*Listbox.background', PANEL2)
         self.root.option_add('*TCombobox*Listbox.foreground', FG)
         self.root.option_add('*TCombobox*Listbox.selectBackground', ACCENT)
         style.configure('Ad.Treeview', background=PANEL2, fieldbackground=PANEL2, foreground=FG,
-                        rowheight=34, font=(FONT, 10), borderwidth=0)
+                        rowheight=30, font=(FONT, 10), borderwidth=0)
         style.configure('Ad.Treeview.Heading', background=PANEL, foreground=MUTED,
                         font=(FONT, 10, 'bold'), relief='flat')
-        style.map('Ad.Treeview', background=[('selected', ACCENT)], foreground=[('selected', FG)])
+        style.map('Ad.Treeview', background=[('selected', ACCENT)], foreground=[('selected', ON_ACCENT)])
 
     def _label(self, parent, text, size=11, color=FG, bold=False, **kw):
         bg = kw.pop('bg', PANEL)
         return tk.Label(parent, text=text, bg=bg, fg=color,
                         font=(FONT, size, 'bold' if bold else 'normal'), **kw)
 
-    def _btn(self, parent, text, command, kind='normal'):
+    def _btn(self, parent, text, command, kind='normal', *, glyph=None, compact=False):
         bg = ACCENT if kind == 'primary' else PANEL2
-        fg = FG
-        return tk.Button(parent, text=text, command=command,
-                         bg=bg, fg=fg, activebackground=ACCENT_LIGHT if kind == 'primary' else BORDER,
-                         activeforeground='#FFFFFF', bd=0, relief='flat', highlightthickness=0, cursor='hand2',
-                         font=(FONT, 10, 'bold' if kind == 'primary' else 'normal'),
-                         padx=16, pady=11)
+        fg = ON_ACCENT if kind == 'primary' else FG
+        button = tk.Button(parent, text=text, command=command,
+                           bg=bg, fg=fg, activebackground=ACCENT_LIGHT if kind == 'primary' else BORDER,
+                           activeforeground=fg, disabledforeground='#37445F' if kind == 'primary' else MUTED,
+                           bd=0, relief='flat', highlightthickness=1, highlightbackground=bg,
+                           highlightcolor=ACCENT_LIGHT, cursor='hand2',
+                           font=(FONT, 10, 'bold' if kind == 'primary' else 'normal'),
+                           padx=8 if compact else 12, pady=4 if compact else 7)
+        if glyph:
+            button.icon = icon(button, glyph, fg, 16)
+            button.configure(image=button.icon, compound='left')
+        return button
+
+    def _menu_button(self, parent, hint, entries, *, glyph='more'):
+        button = tk.Menubutton(parent, bg=PANEL2, fg=FG, activebackground=BORDER, activeforeground=FG,
+                                borderwidth=0, highlightthickness=1, highlightbackground=PANEL2,
+                                highlightcolor=ACCENT_LIGHT, relief='flat', width=34, height=34,
+                                cursor='hand2', takefocus=True)
+        button.icon = icon(button, glyph, FG, 16)
+        button.configure(image=button.icon)
+        menu = tk.Menu(button, tearoff=False, bg=PANEL2, fg=FG,
+                       activebackground=ACCENT, activeforeground=ON_ACCENT, font=(FONT, 10))
+        button.configure(menu=menu)
+        for label, command in entries:
+            menu.add_command(label=label, command=command)
+        bind_tooltip(button, hint)
+        return button
 
     def _entry(self, parent, var, width=20, **kw):
         return tk.Entry(parent, textvariable=var, width=width, bg=PANEL2, fg=FG,
@@ -216,12 +289,16 @@ class ModernVideoAdInserter(OriginalInserter):
                         highlightbackground=BORDER, relief='flat', bd=0, font=(FONT, 10),
                         **kw)
 
-    def _card(self, parent, title=None, subtitle=None):
+    def _card(self, parent, title=None, subtitle=None, *, glyph=None):
         frame = tk.Frame(parent, bg=PANEL, highlightbackground=BORDER, highlightthickness=1)
         if title:
             hdr = tk.Frame(frame, bg=PANEL)
-            hdr.pack(fill='x', padx=18, pady=(15, 6 if subtitle else 12))
-            self._label(hdr, title, 12, bold=True).pack(anchor='w')
+            hdr.pack(fill='x', padx=18, pady=(11, 6 if subtitle else 8))
+            heading = self._label(hdr, title, 12, bold=True)
+            if glyph:
+                heading.icon = icon(heading, glyph, ACCENT_LIGHT, 19)
+                heading.configure(image=heading.icon, compound='left', padx=1)
+            heading.pack(anchor='w')
             if subtitle:
                 self._label(hdr, subtitle, 9, MUTED, wraplength=560, justify='left').pack(anchor='w', pady=(5, 0))
         return frame
@@ -258,11 +335,19 @@ class ModernVideoAdInserter(OriginalInserter):
                         justify='left').pack(side='left', padx=12)
         return ent
 
+    @staticmethod
+    def _scroll_range(scrollbar, first, last):
+        if float(first) == 0 and float(last) == 1:
+            scrollbar.pack_forget()
+        else:
+            scrollbar.pack(side='right', fill='y')
+        scrollbar.set(first, last)
+
     def _scroll_page(self, parent):
-        canvas = tk.Canvas(parent, bg=BG, highlightthickness=0)
+        canvas = tk.Canvas(parent, bg=BG, width=1, height=1, highlightthickness=0)
         scroll = ttk.Scrollbar(parent, orient='vertical', command=canvas.yview,
                                style='Ad.Vertical.TScrollbar')
-        canvas.configure(yscrollcommand=scroll.set)
+        canvas.configure(yscrollcommand=lambda first, last: self._scroll_range(scroll, first, last))
         scroll.pack(side='right', fill='y')
         canvas.pack(side='left', fill='both', expand=True)
         content = tk.Frame(canvas, bg=BG)
@@ -286,80 +371,102 @@ class ModernVideoAdInserter(OriginalInserter):
         return content
 
     def _build_sources(self, page):
-        uploads = self._card(page, tr('Исходные видео'))
-        uploads.pack(fill='x', pady=(0, 9))
+        uploads = self._card(page, tr('Исходные видео'), glyph='video')
         buttons = tk.Frame(uploads, bg=PANEL)
-        buttons.pack(fill='x', padx=18, pady=(0, 7))
-        self._btn(buttons, tr('+ Добавить видео'), self.choose_videos).pack(side='left')
-        self._btn(buttons, tr('Из публикаций'), self.select_from_ready).pack(side='left', padx=7)
-        self._btn(buttons, tr('Убрать выбранные'), self.remove_selected).pack(side='left')
-        self._btn(buttons, tr('Очистить список'), self.clear_videos).pack(side='left', padx=7)
-        self.video_count = self._label(buttons, tr('Выбрано видео: 0'), 9, MUTED)
-        self.video_count.pack(side='right')
+        buttons.pack(fill='x', padx=17, pady=(0, 8))
+        self._btn(buttons, tr('+ Добавить видео').lstrip('+ '), self.choose_videos,
+                  glyph='plus').pack(side='left')
+        self._menu_button(buttons, tr('Действия со списком'), (
+            (tr('Из публикаций'), self.select_from_ready),
+            (tr('Убрать выбранные'), self.remove_selected),
+            (tr('Очистить список'), self.clear_videos),
+        )).pack(side='right')
         wrapper = tk.Frame(uploads, bg=PANEL2)
-        wrapper.pack(fill='x', padx=18, pady=(0, 13))
-        self.video_list = tk.Listbox(wrapper, height=3, bg=PANEL2, fg=FG, selectbackground=ACCENT,
+        wrapper.pack(fill='both', expand=True, padx=17)
+        self.video_list = tk.Listbox(wrapper, height=5, width=1, bg=PANEL2, fg=FG,
+                                     selectbackground=ACCENT, selectforeground=ON_ACCENT,
                                      selectmode='extended', exportselection=False, relief='flat',
-                                     highlightthickness=0, font=(MONO, 10))
-        self.video_list.pack(side='left', fill='both', expand=True, padx=7, pady=4)
+                                     highlightthickness=1, highlightbackground=PANEL2,
+                                     highlightcolor=ACCENT_LIGHT, font=(FONT, 10))
+        self.video_list.pack(side='left', fill='both', expand=True, padx=(6, 3), pady=4)
         scrollbar = ttk.Scrollbar(wrapper, command=self.video_list.yview, style='Ad.Vertical.TScrollbar')
         scrollbar.pack(side='right', fill='y')
-        self.video_list.configure(yscrollcommand=scrollbar.set)
+        self.video_list.configure(yscrollcommand=lambda first, last: self._scroll_range(scrollbar, first, last))
+        self.empty_videos = self._label(wrapper, tr('Видео не выбраны'), 10, MUTED, bg=PANEL2)
+        self.empty_videos.place(relx=.5, rely=.5, anchor='center')
+        self.video_count = self._label(uploads, tr('Выбрано видео: {0}').format(0), 9, MUTED)
+        self.video_count.pack(anchor='w', padx=17, pady=(7, 12))
+        return uploads
 
     def _build_export_mode(self, page):
-        card = self._card(page, tr('Что сделать с видео'))
-        card.pack(fill='x', pady=(0, 9))
+        card = self._card(page, tr('Что сделать с видео'), glyph='edit')
         modes = tk.Frame(card, bg=PANEL)
-        modes.pack(fill='x', padx=16, pady=(0, 7))
+        modes.pack(fill='x', padx=17, pady=(0, 7))
         self.mode_buttons = []
-        for value, label in (('cut', tr('Нарезать на части')), ('whole', tr('Целое видео с баннерами'))):
+        for value, label, glyph in (('cut', tr('Нарезать на части'), 'scissors'),
+                                    ('whole', tr('Целое видео с баннерами'), 'image')):
             button = tk.Radiobutton(modes, text=label, value=value, variable=self.export_mode,
-                                    bg=PANEL, fg=FG, selectcolor=PANEL2,
-                                    activebackground=PANEL, activeforeground=FG, font=(FONT, 10),
-                                    highlightthickness=0, padx=6, pady=3)
-            button.pack(side='left', padx=(0, 12))
+                                    indicatoron=False, bg=PANEL2, fg=FG, selectcolor=BORDER,
+                                    activebackground=BORDER, activeforeground=FG, font=(FONT, 9, 'bold'),
+                                    highlightthickness=1, highlightbackground=BORDER,
+                                    highlightcolor=ACCENT_LIGHT, relief='flat', overrelief='flat',
+                                    borderwidth=0, padx=8, pady=6, cursor='hand2')
+            button.icon = icon(button, glyph, ACCENT_LIGHT, 16)
+            button.configure(image=button.icon, compound='left')
+            button.pack(side='left', padx=(0, 6))
             self.mode_buttons.append(button)
         self.cut_fields = tk.Frame(card, bg=PANEL)
         fields = tk.Frame(self.cut_fields, bg=PANEL)
         fields.pack(fill='x')
         for col, (label, variable, width) in enumerate((
-            (tr('Длина части'), self.cut_duration, 12),
-            (tr('Шаблон имени'), self.cut_name, 28),
-            (tr('Начальный номер'), self.cut_start, 12),
+            (tr('Длина части'), self.cut_duration, 9),
+            (tr('Шаблон имени'), self.cut_name, 17),
+            (tr('Начальный номер'), self.cut_start, 9),
         )):
             field = tk.Frame(fields, bg=PANEL)
             field.grid(row=0, column=col, sticky='ew', padx=(0, 12))
             self._label(field, label, 9, MUTED).pack(anchor='w')
             self._entry(field, variable, width=width).pack(fill='x', pady=3, ipady=5)
         fields.columnconfigure(1, weight=1)
-        self.cut_name_preview = self._label(self.cut_fields, '', 9, CYAN, wraplength=860, justify='left')
-        self.cut_name_preview.pack(anchor='w', pady=(1, 2))
+        self.cut_name_preview = self._label(self.cut_fields, '', 9, MUTED, wraplength=380, justify='left')
+        self.cut_name_preview.pack(anchor='w', pady=(3, 3))
+        self.cut_fields.bind('<Configure>', lambda event: self.cut_name_preview.configure(wraplength=max(1, event.width)))
         tk.Checkbutton(self.cut_fields, text=tr('Сохранять последний короткий фрагмент'), variable=self.cut_tail,
                        bg=PANEL, fg=FG, selectcolor=PANEL2, activebackground=PANEL,
                        activeforeground=FG, font=(FONT, 9)).pack(anchor='w')
+        self.cut_fast_toggle = tk.Checkbutton(
+            self.cut_fields, text=tr('Быстро, по ключевым кадрам (длина приблизительная)'), variable=self.cut_fast,
+            bg=PANEL, fg=FG, selectcolor=PANEL2, activebackground=PANEL, activeforeground=FG, font=(FONT, 9),
+        )
         for var in (self.cut_name, self.cut_start):
             var.trace_add('write', lambda *_: self._update_cut_preview())
         self._update_cut_preview()
+        return card
 
-    def _build_export_footer(self, shell):
+    def _build_export_footer(self, shell, body):
         footer = tk.Frame(shell, bg=PANEL, highlightthickness=1, highlightbackground=BORDER)
-        footer.pack(fill='x', padx=24, pady=(8, 12))
-        self._path_row(footer, tr('Папка результата'), self.output_dir, self.choose_output, tr('Выбрать…'))
+        footer.pack(side='bottom', fill='x', before=body, padx=22, pady=(8, 12))
+        output = tk.Frame(footer, bg=PANEL)
+        output.pack(fill='x', padx=15, pady=(9, 6))
+        self._label(output, tr('Папка результата'), 9, MUTED).pack(side='left', padx=(0, 8))
+        self._entry(output, self.output_dir, width=8).pack(side='left', fill='x', expand=True, ipady=5)
+        self._btn(output, tr('Выбрать…'), self.choose_output, glyph='folder',
+                  compact=True).pack(side='left', padx=(6, 0))
         actions = tk.Frame(footer, bg=PANEL)
-        actions.pack(fill='x', padx=18, pady=(0, 7))
-        self.start_btn = self._btn(actions, tr('Начать нарезку'), self.start_processing, 'primary')
+        actions.pack(fill='x', padx=15, pady=(0, 7))
+        self.start_btn = self._btn(actions, tr('Начать нарезку'), self.start_processing, 'primary', glyph='scissors')
+        self.whole_icon = icon(self.start_btn, 'video', ON_ACCENT, 16)
         self.start_btn.pack(side='left')
         self.cancel_btn = self._btn(actions, tr('Отмена'), self.cancel_processing)
-        self.cancel_btn.pack(side='left', padx=8)
-        self._btn(actions, tr('Открыть папку'), self.open_output).pack(side='right')
-        self.send_btn = self._btn(actions, tr('Передать в публикации'), self.send_to_publisher)
+        self._btn(actions, tr('Открыть папку'), self.open_output, glyph='folder').pack(side='right')
+        self.send_btn = self._btn(actions, tr('Передать в публикации'), self.send_to_publisher, glyph='arrow_right')
         self.send_btn.pack(side='right', padx=8)
         self.progress = ttk.Progressbar(footer, mode='determinate', maximum=100,
                                         style='Ad.Horizontal.TProgressbar')
-        self.progress.pack(fill='x', padx=18, pady=(0, 3))
         self.status.set(tr('Добавь исходное видео, чтобы начать.'))
-        tk.Label(footer, textvariable=self.status, bg=PANEL, fg=MUTED, font=(FONT, 9),
-                 anchor='w', wraplength=880, justify='left').pack(fill='x', padx=18, pady=(0, 7))
+        self.footer_status = tk.Label(footer, textvariable=self.status, bg=PANEL, fg=MUTED,
+                                      font=(FONT, 9), anchor='w', wraplength=800, justify='left')
+        self.footer_status.pack(fill='x', padx=15, pady=(0, 7))
 
     @staticmethod
     def _display_time(value):
@@ -381,33 +488,55 @@ class ModernVideoAdInserter(OriginalInserter):
                 raise ValueError(tr('Номер должен быть больше нуля.'))
             source = self.video_files[0] if self.video_files else tr('Видео.mp4')
             names = [output_name(self.cut_name.get(), number+i, source) for i in range(3)]
-            self.cut_name_preview.configure(text=tr('Например: ') + '  ·  '.join(names), fg=CYAN)
+            self.cut_name_preview.configure(text=tr('Например: ') + '  ·  '.join(names), fg=MUTED)
         except (ValueError, OverflowError) as exc:
             self.cut_name_preview.configure(text=str(exc), fg=RED)
 
     def refresh_video_list(self):
-        super().refresh_video_list()
+        self.video_list.delete(0, 'end')
+        sources = list(map(Path, self.video_files))
+        names = Counter(source.name.casefold() for source in sources)
+        for source in sources:
+            name = source.name
+            if names[name.casefold()] > 1:
+                name = f'{name}   ·   {source.parent}'
+            self.video_list.insert('end', name)
+        self.video_count.configure(text=tr('Выбрано видео: {0}').format(len(self.video_files)))
+        if self.video_files:
+            self.empty_videos.place_forget()
+        else:
+            self.empty_videos.place(relx=.5, rely=.5, anchor='center')
         self._update_cut_preview()
         if not self.busy:
             self.status.set(tr('Можно выбрать режим и запустить обработку.') if self.video_files
                             else tr('Добавь исходное видео, чтобы начать.'))
 
     def _update_mode(self, *_args):
-        cutting = self.export_mode.get() == 'cut'
+        mode = self.export_mode.get()
+        cutting = mode == 'cut'
+        for button in self.mode_buttons:
+            selected = button.cget('value') == mode
+            button.configure(highlightbackground=ACCENT if selected else BORDER, fg=FG if selected else MUTED)
         self.cut_fields.pack_forget()
         self.cut_banner_controls.pack_forget()
-        self.banner_details.pack_forget()
         if cutting:
-            self.cut_fields.pack(fill='x', padx=18, pady=(0, 10))
-            self.cut_banner_controls.pack(fill='x', padx=18, pady=(0, 8))
+            self.cut_fields.pack(fill='x', padx=18, pady=(0, 6))
+            self.cut_banner_controls.pack(fill='x', padx=18, pady=(0, 10))
+        if cutting and self.cut_banners.get() == 'Без баннеров':
+            self.cut_fast_toggle.pack(anchor='w')
+        else:
+            self.cut_fast_toggle.pack_forget()
         if not cutting or self.cut_banners.get() != 'Без баннеров':
-            self.banner_details.pack(fill='x')
+            self.banner_card.pack(fill='x', pady=(0, 9))
+        else:
+            self.banner_card.pack_forget()
         self.banner_tip.configure(text=(
             tr('Время считается от начала каждой части. Стоп-кадр увеличивает длину результата.')
             if cutting else tr('Время считается от начала исходного видео. Стоп-кадр увеличивает его длину.')
         ))
         self.insertion_tree.heading('time', text=tr('От начала части') if cutting else tr('От начала видео'))
-        self.start_btn.configure(text=tr('Начать нарезку') if cutting else tr('Создать видео'))
+        self.start_btn.configure(text=tr('Начать нарезку') if cutting else tr('Создать видео'),
+                                 image=self.start_btn.icon if cutting else self.whole_icon)
         self._refresh_insertions()
         self._update_badges()
 
@@ -417,6 +546,7 @@ class ModernVideoAdInserter(OriginalInserter):
         from video_splitter import run_split, validate_options
         cutting = self.export_mode.get() == 'cut'
         mode = CUT_BANNER_MODES[self.cut_banners.get()] if cutting else None
+        fast_split = mode == 'none' and self.cut_fast.get()
         try:
             if not self.video_files:
                 raise ValueError(tr('Добавь хотя бы одно исходное видео.'))
@@ -428,7 +558,7 @@ class ModernVideoAdInserter(OriginalInserter):
                 self.show_settings()
                 raise ValueError(tr('FFmpeg и FFprobe не найдены. Укажи путь к паре из одной сборки в настройках.'))
             ffmpeg, ffprobe = tools
-            crf = int(self.crf.get())
+            crf = 18 if fast_split else int(self.crf.get())
             if not 15 <= crf <= 28:
                 raise ValueError(tr('Качество H.264 (CRF) должно быть от 15 до 28.'))
 
@@ -459,7 +589,7 @@ class ModernVideoAdInserter(OriginalInserter):
             if cutting:
                 options.update(clip_duration=self.cut_duration.get(), name_template=self.cut_name.get(),
                                start_part=self.cut_start.get(), keep_tail=self.cut_tail.get(),
-                               split_banner_mode=mode)
+                               split_banner_mode=mode, split_fast=fast_split)
                 seconds, _ = validate_options(options)
                 if any(entry['time'] >= seconds for entry in entries):
                     raise ValueError(tr('Время появления баннера должно быть меньше длины части.'))
@@ -481,26 +611,26 @@ class ModernVideoAdInserter(OriginalInserter):
         self.processing_thread.start()
 
     def _build_inserts(self, page):
-        card = self._card(page, tr('Баннеры'))
-        card.pack(fill='x', pady=(0, 9))
-        self.cut_banner_controls = tk.Frame(card, bg=PANEL)
+        self.banner_card = self._card(page, tr('Баннеры'), glyph='image')
+        self.cut_banner_controls = tk.Frame(self.options_card, bg=PANEL)
+        self._label(self.cut_banner_controls, tr('Баннеры'), 9, MUTED).pack(side='left', padx=(0, 9))
         self.cut_banner_menu = localized_combobox(self.cut_banner_controls, self.cut_banners,
-                                                   CUT_BANNER_MODES, width=30, style='Ad.TCombobox')
+                                                   CUT_BANNER_MODES, width=25, style='Ad.TCombobox')
         self.cut_banner_menu.pack(side='left')
-        self.banner_details = tk.Frame(card, bg=PANEL)
+        self.banner_details = tk.Frame(self.banner_card, bg=PANEL)
+        self.banner_details.pack(fill='x')
         self.banner_tip = self._label(self.banner_details, '', 9, MUTED)
         self.banner_tip.pack(anchor='w', padx=18, pady=(0, 6))
         row = tk.Frame(self.banner_details, bg=PANEL)
         row.pack(fill='x', padx=18, pady=(0, 7))
-        for label, action in (
-            (tr('+ Добавить баннер'), self.add_insertion),
-            (tr('Изменить'), self.edit_insertion),
+        self._btn(row, tr('Добавить баннер'), self.add_insertion, glyph='plus').pack(side='left')
+        self._btn(row, tr('Изменить'), self.edit_insertion, glyph='edit').pack(side='left', padx=6)
+        self._menu_button(row, tr('Действия с баннерами'), (
             (tr('Дублировать'), self.duplicate_insertion),
             (tr('Убрать'), self.remove_insertion),
             (tr('Сохранить шаблон'), self.export_template),
             (tr('Загрузить шаблон'), self.import_template),
-        ):
-            self._btn(row, label, action).pack(side='left', padx=(0, 6))
+        )).pack(side='right')
         table_wrap = tk.Frame(self.banner_details, bg=PANEL2)
         table_wrap.pack(fill='x', padx=18, pady=(0, 12))
         self.insertion_tree = ttk.Treeview(table_wrap, columns=('time', 'file', 'mode'),
@@ -774,10 +904,17 @@ class ModernVideoAdInserter(OriginalInserter):
             return
         self._button_state = (state, ready)
         self.start_btn.configure(state=state)
+        self.subtitle_btn.configure(state=state)
         for button in self.mode_buttons:
             button.configure(state=state)
         self.cut_banner_menu.configure(state='disabled' if self.busy else 'readonly')
-        self.cancel_btn.configure(state='normal' if self.busy else 'disabled')
+        self.cut_fast_toggle.configure(state=state)
+        if self.busy:
+            self.cancel_btn.pack(side='left', after=self.start_btn, padx=8)
+            self.progress.pack(fill='x', padx=15, pady=(0, 3), before=self.footer_status)
+        else:
+            self.cancel_btn.pack_forget()
+            self.progress.pack_forget()
         self.send_btn.configure(state='normal' if ready else 'disabled')
 
     def _update_tools(self, *_args):
@@ -799,6 +936,8 @@ class ModernVideoAdInserter(OriginalInserter):
             self.export_mode.set(prefs['export_mode'])
         if isinstance(prefs.get('cut_tail'), bool):
             self.cut_tail.set(prefs['cut_tail'])
+        if isinstance(prefs.get('cut_fast'), bool):
+            self.cut_fast.set(prefs['cut_fast'])
         for name in ('banner_file', 'output_dir', 'insert_at', 'banner_mode', 'fit_mode',
                      'key_color', 'key_similarity', 'key_blend', 'crf'):
             value = prefs.get(name)
@@ -838,7 +977,7 @@ class ModernVideoAdInserter(OriginalInserter):
         opts['insertions'] = [dict(item) for item in self.insertions]
         opts.update(cut_duration=self.cut_duration.get(), cut_name=self.cut_name.get(),
                     cut_start=self.cut_start.get(), cut_tail=self.cut_tail.get(), cut_banners=self.cut_banners.get(),
-                    export_mode=self.export_mode.get())
+                    cut_fast=self.cut_fast.get(), export_mode=self.export_mode.get())
         return opts
 
     def _on_change(self, *_args):

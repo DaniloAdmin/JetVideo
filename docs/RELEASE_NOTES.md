@@ -1,16 +1,12 @@
-JetVideo is a portable Windows application for splitting videos, adding timed banners, and scheduling TikTok posts through Buffer and Cloudflare R2.
+**[Download JetVideo 1.1.0 for Windows x64](https://github.com/DaniloAdmin/JetVideo/releases/download/v1.1.0/JetVideo-1.1.0-Windows-x64.zip).** Extract the entire ZIP and open `JetVideo.exe` on 64-bit Windows 10 or 11. The portable build includes FFmpeg, FFprobe and Whisper with both subtitle models.
 
-## Download and start
+## What's new
 
-1. [Download JetVideo for Windows](https://github.com/DaniloAdmin/JetVideo/releases/download/v4.3.0/JetVideo-1.0.0-Windows-x64.zip) and extract the entire ZIP into a folder you can write to.
-2. Open `JetVideo.exe` on Windows 10 or 11 (64-bit). The ZIP contains Python, FFmpeg and FFprobe.
-3. To split videos or add banners, open **Video Editor**. To schedule TikTok posts, add your own Buffer key and Cloudflare R2 details in **Publishing → Connections** and link your TikTok channel under **Accounts**. Click **?** beside a field for illustrated setup instructions.
+- **Dark interface with clearer navigation.** Icon tabs, short transitions, separate subtitle editing and styling tabs, and more room for posting history in smaller windows.
+- **Offline Russian and Ukrainian subtitles.** Transcribe speech or import an SRT. Preview the video with sound, correct phrases, adjust placement and style, then save an SRT or export an MP4 with subtitles in the picture. The default speech filter skips sections without detected speech and removes standalone fillers. Singing or very quiet speech can still be misclassified.
+- **Fast splitting without re-encoding.** With banners off, keyframe mode copies video and audio into numbered clips. Clip lengths depend on keyframe spacing. Use regular splitting for exact timing or to add timed banners.
 
-## Features
-
-- Split long videos into numbered clips of a chosen duration, with optional timed banners.
-- Set captions, hashtags and publishing windows for each TikTok profile. Review the queue and posting history in JetVideo.
-- Switch between English, Ukrainian and Russian, and open illustrated help with **F1**.
+Editing works without an account. To schedule posts, connect a TikTok channel in Buffer and configure a Cloudflare R2 bucket in **Publishing → Connections**. The app includes illustrated setup help in English, Ukrainian and Russian, available with **F1**.
 
 [English guide](https://github.com/DaniloAdmin/JetVideo/blob/main/README.md) · [Українська](https://github.com/DaniloAdmin/JetVideo/blob/main/README.uk.md) · [Русский](https://github.com/DaniloAdmin/JetVideo/blob/main/README.ru.md)
 
@@ -20,8 +16,8 @@ JetVideo is distributed under GNU GPLv3. Copyright © 2026 axegaoo. FFmpeg and F
 
 | Asset | Contents |
 | --- | --- |
-| `JetVideo-1.0.0-Windows-x64.zip` | Portable application and tools |
-| `JetVideo-1.0.0-source.zip` | JetVideo source and build scripts |
-| `FFmpeg-JetVideo-v4.3.0-source.zip` | Corresponding FFmpeg source, build script, configuration, and hashes |
-| `JetVideo-1.0.0-dependency-sources.zip` | Source archives of bundled Python dependencies and runtime components |
+| `JetVideo-1.1.0-Windows-x64.zip` | Portable Windows application with FFmpeg, FFprobe and offline subtitles |
+| `JetVideo-1.1.0-source.zip` | JetVideo source and build scripts |
+| `FFmpeg-JetVideo-v1.1.0-source.zip` | Corresponding FFmpeg source, build script, configuration, and hashes |
+| `JetVideo-1.1.0-dependency-sources.zip` | Python dependencies, runtime sources, and Whisper source and build instructions |
 | `SHA256SUMS.txt` | SHA-256 checksums |

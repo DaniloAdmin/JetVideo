@@ -1,5 +1,5 @@
 ﻿#define AppName "JetVideo | AutoPost"
-#define AppVersion "1.0.0"
+#define AppVersion "1.1.0"
 [Setup]
 AppId={{8AD67C8F-E442-44D7-9B97-B78D94FE0101}
 AppName={#AppName}

@@ -11,6 +11,17 @@ from release_security import scan, inspect_bytes
 
 ROOT = Path(__file__).resolve().parent
 TOOLS = ('ffmpeg.exe', 'ffprobe.exe')
+WHISPER_FILES = (
+    'whisper-cli.exe', 'ggml-base.bin', 'ggml-silero-v5.1.2.bin',
+    'LICENSE-whisper.cpp.txt', 'LICENSE-Whisper-model.txt', 'LICENSE-Silero.txt',
+    'PROVENANCE.txt', 'PROVENANCE-Silero.txt',
+    'ggml-base.dll', 'ggml.dll', 'libwhisper.dll',
+    *(f'ggml-cpu-{cpu}.dll' for cpu in (
+        'alderlake', 'cannonlake', 'cascadelake', 'cooperlake', 'haswell', 'icelake',
+        'ivybridge', 'piledriver', 'sandybridge', 'sapphirerapids', 'skylakex',
+        'sse42', 'x64', 'zen4',
+    )),
+)
 RELEASE_DOCUMENTS = ('README.md', 'README.ru.md', 'README.uk.md', 'LICENSE', 'COPYRIGHT.md',
                      'THIRD_PARTY_NOTICES.md', 'SECURITY.md', '.env.example', 'starter_config.json',
                      'JetVideo.portable')
@@ -33,13 +44,14 @@ def make_zip(target, files):
             archive.write(path, name)
 
 
-def make_portable_zip(target, executable, ffmpeg_directory):
+def make_portable_zip(target, executable, ffmpeg_directory, whisper_directory):
     portable = [(executable, EXE_NAME)]
     portable.extend((ROOT / name, name) for name in RELEASE_DOCUMENTS)
     for directory in ('third_party', 'docs'):
         portable.extend((path, path.relative_to(ROOT).as_posix()) for path in sorted((ROOT / directory).rglob('*'))
                         if path.is_file())
     portable.extend((ffmpeg_directory / name, f'tools/{name}') for name in TOOLS)
+    portable.extend((whisper_directory / name, f'tools/whisper/{name}') for name in WHISPER_FILES)
     make_zip(target, portable)
 
 
@@ -62,6 +74,7 @@ def main(argv=None):
     parser.add_argument('--output', type=Path, default=ROOT / 'release' / RELEASE_TAG)
     parser.add_argument('--ffmpeg-directory', type=Path, required=True)
     parser.add_argument('--ffmpeg-source', type=Path, required=True)
+    parser.add_argument('--whisper-directory', type=Path, required=True)
     parser.add_argument('--dependency-sources', type=Path)
     args = parser.parse_args(argv)
     report = scan(ROOT)
@@ -70,6 +83,9 @@ def main(argv=None):
     if not args.executable.is_file():
         raise FileNotFoundError(args.executable)
     verify_ffmpeg(args.ffmpeg_directory, args.ffmpeg_source)
+    for filename in WHISPER_FILES:
+        if not (args.whisper_directory / filename).is_file():
+            raise FileNotFoundError(args.whisper_directory / filename)
     source_files = files_for_source()
     for path in source_files:
         if inspect_bytes(path.relative_to(ROOT).as_posix(), path.read_bytes()):
@@ -81,7 +97,7 @@ def main(argv=None):
     portable = output / f'{prefix}-Windows-x64.zip'
     ffmpeg = output / f'FFmpeg-JetVideo-{RELEASE_TAG}-source.zip'
     make_zip(source, [(p, p.relative_to(ROOT).as_posix()) for p in source_files])
-    make_portable_zip(portable, args.executable, args.ffmpeg_directory)
+    make_portable_zip(portable, args.executable, args.ffmpeg_directory, args.whisper_directory)
     shutil.copyfile(args.ffmpeg_source, ffmpeg)
     artifacts = [portable, source, ffmpeg]
     if args.dependency_sources is not None:

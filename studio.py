@@ -5,17 +5,20 @@ import queue
 import threading
 import tkinter as tk
 from pathlib import Path
-from tkinter import messagebox, filedialog, ttk
+from tkinter import messagebox, filedialog
+from tkinter.font import Font
 
 import bot
 import publisher_ui
 from i18n import LANGUAGES, language, set_language, system_language, tr
-from publisher_ui import ModernApp, WorkspaceSelectionRequired, bundled, BG, PANEL, PANEL2, BORDER, FG, MUTED, ACCENT, ACCENT_HOVER, FONT
+from publisher_ui import ModernApp, WorkspaceSelectionRequired, bundled, BG, PANEL, PANEL2, BORDER, FG, MUTED, ACCENT, FONT
 from editor_ui import ModernVideoAdInserter
-from guide_ui import GuideWindow, bind_tooltip, globe_icon, headset_icon
+from guide_ui import GuideWindow, bind_tooltip
 from handoff import build_plan, transfer
-from app_info import APP_NAME
+from app_info import APP_NAME, PRODUCT_NAME
 from keyboard_shortcuts import install_windows_shortcuts
+from ui_icons import icon
+from ui_motion import Tween
 
 
 CONNECTION_HELP = {
@@ -26,24 +29,28 @@ CONNECTION_HELP = {
     'R2_BUCKET_NAME': ('R2_SETUP', 'r2-bucket'),
     'R2_PUBLIC_BASE_URL': ('R2_SETUP', 'r2-public-url'),
 }
+TAB_FILL = '#262544'
+TAB_TEXT = '#DCD6FF'
+TAB_HOVER = '#212D44'
 
 
 class Studio(tk.Tk):
-    def __init__(self, *, locale_code=None, initial_page='publisher', previous_outputs=()):
+    def __init__(self, *, locale_code=None, initial_page='editor', previous_outputs=()):
         self.language_file = publisher_ui.data_home() / 'ui-language.json'
         saved = publisher_ui.read_json(self.language_file, {})
         code = saved.get('language') if isinstance(saved, dict) else None
         set_language(locale_code or (code if isinstance(code, str) and code in LANGUAGES else system_language()))
         super().__init__()
         install_windows_shortcuts(self)
-        self.title(APP_NAME)
-        self.geometry(f'{min(1420, self.winfo_screenwidth()-40)}x{min(920, self.winfo_screenheight()-90)}')
-        self.minsize(1080, 680)
+        self.title(f'{APP_NAME} · Modern')
+        self.geometry(f'{min(1280, self.winfo_screenwidth()-40)}x{min(820, self.winfo_screenheight()-90)}')
+        self.minsize(960, 620)
         self.configure(bg=BG)
         self.publisher: ModernApp | None = None
         self.editor: ModernVideoAdInserter | None = None
         self.guide: GuideWindow | None = None
         self._active = None
+        self._motion = Tween(self)
         self._transfer_busy = False
         self._previous_outputs = previous_outputs
         self.reopen = None
@@ -59,76 +66,84 @@ class Studio(tk.Tk):
         self.show(initial_page)
 
     def _create_shell(self):
-        top = tk.Frame(self, bg=PANEL, height=77, highlightthickness=1, highlightbackground=BORDER)
+        wordmark_font = Font(self, family=FONT, size=16, weight='bold')
+        top = tk.Frame(self, bg=PANEL, height=max(65, wordmark_font.metrics('linespace') + 24))
         top.pack(side='top', fill='x')
         top.pack_propagate(False)
         ident = tk.Frame(top, bg=PANEL)
-        ident.pack(side='left', padx=(23, 25), pady=14)
-        tk.Label(ident, text='J', bg=ACCENT, fg='#101226', font=(FONT, 19, 'bold'), width=2).pack(side='left')
-        detail = tk.Frame(ident, bg=PANEL)
-        detail.pack(side='left', padx=12)
-        tk.Label(detail, text=APP_NAME, bg=PANEL, fg=FG, font=(FONT, 14, 'bold')).pack(anchor='w')
-        tk.Label(detail, text=tr('Нарезка, баннеры и публикации в TikTok'), bg=PANEL, fg=MUTED, font=(FONT, 9)).pack(anchor='w')
+        ident.pack(side='left', padx=(21, 24))
+        mark = tk.Canvas(ident, width=36, height=36, bg=PANEL, highlightthickness=0, takefocus=False)
+        mark.create_polygon(2, 10, 2, 2, 10, 2, 26, 2, 34, 2, 34, 10, 34, 26, 34, 34,
+                            26, 34, 10, 34, 2, 34, 2, 26, smooth=True, fill=ACCENT)
+        mark.create_text(18, 17, text='J', fill='#101226', font=(FONT, -25, 'bold'))
+        mark.pack(side='left')
+        tk.Label(ident, text=PRODUCT_NAME, bg=PANEL, fg=FG, font=(FONT, 16, 'bold')).pack(side='left', padx=(9, 0))
+        tk.Frame(top, bg=BORDER, width=1, height=27).pack(side='left', padx=(0, 16))
         self._build_header_actions(top)
         self.tabs = {}
-        for key, title in [('publisher', tr('◉  ПУБЛИКАЦИИ')), ('editor', tr('▣  МОНТАЖ И НАРЕЗКА'))]:
-            button = tk.Button(top, text=title, command=lambda value=key: self.show(value),
-                               bg=PANEL2, fg=MUTED, activebackground=ACCENT_HOVER,
-                               activeforeground=FG, font=(FONT, 11, 'bold'), relief='flat',
-                               borderwidth=0, highlightthickness=0, padx=24, pady=13, cursor='hand2')
-            button.pack(side='left', padx=5, pady=14)
+        for key, title, symbol in (('editor', tr('Монтаж и нарезка'), 'edit'),
+                                   ('publisher', tr('Публикации'), 'publish')):
+            button = self._header_button(top, title, symbol, lambda value=key: self.show(value))
+            button.pack(side='left', padx=3)
             self.tabs[key] = button
+        tk.Frame(self, bg=BORDER, height=1).pack(side='top', fill='x')
         self.stage = tk.Frame(self, bg=BG)
         self.stage.pack(fill='both', expand=True)
         self.publisher_host = tk.Frame(self.stage, bg=BG)
         self.editor_host = tk.Frame(self.stage, bg=BG)
-        for tab in (self.publisher_host, self.editor_host):
-            tab.place(relx=0, rely=0, relwidth=1, relheight=1)
+
+    def _header_button(self, parent, label, symbol, command):
+        button = tk.Button(parent, text=label, command=command, compound='left', bg=PANEL, fg=MUTED,
+                           activebackground=TAB_HOVER, activeforeground=FG, font=(FONT, 10, 'bold'),
+                           borderwidth=0, relief='flat', highlightthickness=1, highlightbackground=PANEL,
+                           highlightcolor=ACCENT, padx=10, pady=8, cursor='hand2')
+        button.icons = (icon(button, symbol, MUTED), icon(button, symbol, TAB_TEXT))
+        button.configure(image=button.icons[0])
+        button.bind('<Enter>', lambda _event: button.configure(bg=TAB_HOVER) if button['fg'] != TAB_TEXT else None)
+        button.bind('<Leave>', lambda _event: button.configure(bg=TAB_FILL if button['fg'] == TAB_TEXT else PANEL))
+        return button
 
     def _build_header_actions(self, top):
         actions = tk.Frame(top, bg=PANEL)
-        actions.pack(side='right', padx=(8, 22))
-        style = ttk.Style(self)
-        style.theme_use('clam')
-        style.configure('Header.TButton', background=PANEL2, foreground=FG, borderwidth=1,
-                        bordercolor=BORDER, lightcolor=PANEL2, darkcolor=PANEL2,
-                        focuscolor=ACCENT, padding=0, font=(FONT, 14, 'bold'))
-        style.map('Header.TButton', background=[('disabled', PANEL2), ('active', ACCENT_HOVER)],
-                  foreground=[('disabled', MUTED), ('active', BG)])
+        actions.pack(side='right', padx=(8, 17))
         self.header_actions = {}
-        for key, label, hint, command in (
-            ('help', '?', tr('Справка (F1)'), self.show_help),
-            ('donation', '$', tr('Поддержать разработчика (позже)'), None),
-            ('support', tr('Техподдержка'), tr('Техподдержка (позже)'), None),
-            ('language', tr('Язык'), tr('Язык интерфейса'), self.show_languages),
+        for key, hint, command in (
+            ('help', tr('Справка (F1)'), self.show_help),
+            ('language', tr('Язык интерфейса'), self.show_languages),
+            ('more', tr('Другие действия'), self.show_more),
         ):
-            slot = tk.Frame(actions, bg=PANEL, width=36, height=36)
-            slot.pack(side='left', padx=4)
-            slot.pack_propagate(False)
-            button = ttk.Button(slot, text=label, command=command, style='Header.TButton',
-                                state='normal' if command else 'disabled', takefocus=bool(command),
-                                cursor='hand2' if command else 'arrow')
-            if key in ('support', 'language'):
-                draw_icon = headset_icon if key == 'support' else globe_icon
-                button.icon = draw_icon(button)
-                button.configure(image=button.icon, compound='image')
-            button.pack(fill='both', expand=True)
+            button = self._header_button(actions, '', key, command)
+            button.configure(text=hint, compound='none', width=34, height=34)
+            button.pack(side='left', padx=2)
             bind_tooltip(button, hint)
             self.header_actions[key] = button
-        self.language_menu = tk.Menu(self.header_actions['language'], tearoff=False, bg=PANEL2, fg=FG,
-                                     activebackground=ACCENT, activeforeground=BG, font=(FONT, 11))
+        self.language_menu = self._header_menu('language')
+        self.more_menu = self._header_menu('more')
+        self.more_menu.icons = [icon(self.more_menu, name, MUTED) for name in ('support', 'wallet')]
+        for label, glyph in zip((tr('Техподдержка (позже)'), tr('Поддержать разработчика (позже)')), self.more_menu.icons):
+            self.more_menu.add_command(label=label, image=glyph, compound='left', state='disabled')
         self.selected_language = tk.StringVar(self, value=language())
         for code, name in LANGUAGES.items():
             self.language_menu.add_radiobutton(label=name, value=code, variable=self.selected_language,
                                                command=lambda selected=code: self.change_language(selected))
 
-    def show_languages(self):
-        anchor = self.header_actions['language']
-        self.selected_language.set(language())
+    def _header_menu(self, key):
+        return tk.Menu(self.header_actions[key], tearoff=False, bg=PANEL2, fg=FG,
+                       activebackground=ACCENT, activeforeground=BG, font=(FONT, 11))
+
+    def _show_menu(self, key, menu):
+        anchor = self.header_actions[key]
         try:
-            self.language_menu.tk_popup(anchor.winfo_rootx(), anchor.winfo_rooty() + anchor.winfo_height())
+            menu.tk_popup(anchor.winfo_rootx(), anchor.winfo_rooty() + anchor.winfo_height())
         finally:
-            self.language_menu.grab_release()
+            menu.grab_release()
+
+    def show_more(self):
+        self._show_menu('more', self.more_menu)
+
+    def show_languages(self):
+        self.selected_language.set(language())
+        self._show_menu('language', self.language_menu)
 
     def change_language(self, code):
         self.selected_language.set(language())
@@ -178,6 +193,8 @@ class Studio(tk.Tk):
         self.guide.open_section(self.guide.readme, 'captions-and-tags')
 
     def show(self, key: str):
+        if self._active == key:
+            return
         host = self.publisher_host if key == 'publisher' else self.editor_host
         if key == 'publisher' and self.publisher is None:
             for old in self.publisher_host.winfo_children():
@@ -188,7 +205,6 @@ class Studio(tk.Tk):
                 self.publisher.pack(fill='both', expand=True)
             except WorkspaceSelectionRequired:
                 self._workspace_placeholder()
-                self._active = 'publisher'
                 self.show('editor')
                 return
         elif key == 'editor' and self.editor is None:
@@ -200,11 +216,19 @@ class Studio(tk.Tk):
             if self._previous_outputs:
                 self.editor.rendered_files = list(self._previous_outputs)
                 self.editor._update_badges()
-        host.tkraise()
+        was_open = self._active is not None
+        self._motion.cancel()
+        other = self.editor_host if key == 'publisher' else self.publisher_host
+        other.place_forget()
+        host.place(x=0, rely=0, relwidth=1, relheight=1)
         self._active = key
         for tab, button in self.tabs.items():
-            button.configure(bg=ACCENT if tab == key else PANEL2,
-                             fg='#101226' if tab == key else MUTED)
+            selected = tab == key
+            button.configure(bg=TAB_FILL if selected else PANEL, fg=TAB_TEXT if selected else MUTED,
+                             image=button.icons[selected])
+        if was_open:
+            offset = 12 if key == 'publisher' else -12
+            self._motion.play(lambda progress: host.place_configure(x=round(offset * (1.0 - progress))))
 
     def _workspace_placeholder(self):
         for child in self.publisher_host.winfo_children():

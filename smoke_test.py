@@ -2,6 +2,7 @@ from pathlib import Path
 import gc
 import json
 import tempfile
+from time import monotonic, sleep
 from unittest.mock import patch
 
 from app_info import APP_NAME, PRODUCT_NAME
@@ -14,9 +15,9 @@ GUIDE = {
     'uk': ('README.uk.md', 'Швидкий старт', 'Нарізка відео'),
 }
 EDITOR_LABELS = {
-    'ru': ('▣  МОНТАЖ И НАРЕЗКА', 'Начать нарезку', 'Без баннеров'),
-    'en': ('▣  VIDEO EDITOR', 'Start splitting', 'No banners'),
-    'uk': ('▣  МОНТАЖ І НАРІЗКА', 'Почати нарізку', 'Без банерів'),
+    'ru': ('Монтаж и нарезка', 'Начать нарезку', 'Без баннеров'),
+    'en': ('Video Editor', 'Start splitting', 'No banners'),
+    'uk': ('Монтаж і нарізка', 'Почати нарізку', 'Без банерів'),
 }
 
 
@@ -94,9 +95,71 @@ def check_keyboard_shortcuts(app):
         value.set(original)
 
 
+def assert_inside_window(widget):
+    assert widget.winfo_viewable()
+    top = widget.winfo_toplevel()
+    x = widget.winfo_rootx() - top.winfo_rootx()
+    y = widget.winfo_rooty() - top.winfo_rooty()
+    assert 0 <= x < x + widget.winfo_width() <= top.winfo_width()
+    assert 0 <= y < y + widget.winfo_height() <= top.winfo_height()
+
+
+def check_navigation(app):
+    def wait_for_layout(settled):
+        deadline = monotonic() + 1
+        while monotonic() < deadline:
+            app.update()
+            if settled():
+                return
+            sleep(.01)
+        assert settled(), 'Navigation layout did not settle'
+
+    def wait_for_host(host, hidden_host):
+        wait_for_layout(lambda: host.winfo_viewable() and host.winfo_x() == 0)
+        assert not hidden_host.winfo_ismapped()
+        assert host.winfo_width() == app.stage.winfo_width()
+
+    assert set(app.tabs) == {'editor', 'publisher'}
+    for button in app.tabs.values():
+        assert button['text'] and button['image']
+    app.geometry('960x620')
+    app.show('editor')
+    app.update()
+    app.tabs['publisher'].invoke()
+    assert int(app.publisher_host.place_info()['x']) != 0
+    app.geometry('980x632')
+    app.update_idletasks()
+    for key in ('publisher', 'editor', 'publisher', 'editor'):
+        app.tabs[key].invoke()
+        assert app._active == key
+
+    app.geometry('960x620')
+    wait_for_host(app.editor_host, app.publisher_host)
+    assert_inside_window(app.editor.start_btn)
+    assert_inside_window(app.editor.subtitle_btn)
+    assert app.editor.source_card.winfo_rootx() < app.editor.options_card.winfo_rootx()
+
+    app.tabs['publisher'].invoke()
+    wait_for_host(app.publisher_host, app.editor_host)
+    for key, button in app.publisher.nav_buttons.items():
+        assert_inside_window(button)
+        assert button['text'].strip() == app.publisher.titles[key][0] and button['image']
+        button.invoke()
+        assert app.publisher.active_page == key
+    row = app.publisher.nav_buttons[app.publisher.active_page].master
+    indicator = app.publisher.nav_indicator
+    wait_for_layout(lambda: indicator.winfo_viewable() and indicator.winfo_y() == row.winfo_y() + 4)
+    assert indicator.winfo_height() == row.winfo_height() - 8
+    with patch('ui_motion.enabled', return_value=False):
+        for key, host in (('editor', app.editor_host), ('publisher', app.publisher_host)):
+            app.tabs[key].invoke()
+            assert int(host.place_info()['x']) == 0
+
+
 def check_ui(app):
+    check_navigation(app)
     app.geometry('1080x680')
-    checked = []
+    checked = ['navigation/quick-switch-and-compact-window']
     assert app.title().startswith(APP_NAME)
     app.show('publisher')
     for key in app.publisher.page_map:
@@ -133,11 +196,11 @@ def check_ui(app):
         assert window.winfo_viewable()
         window.destroy()
         checked.append('editor/' + name)
-    assert set(app.tabs) == {'publisher', 'editor'}
-    assert tuple(app.header_actions) == ('help', 'donation', 'support', 'language')
-    for key in ('donation', 'support'):
-        assert str(app.header_actions[key]['state']) == 'disabled'
-        assert not app.header_actions[key]['command']
+    assert set(app.header_actions) == {'help', 'language', 'more'}
+    assert app.more_menu.index('end') == 1
+    for index in range(2):
+        assert str(app.more_menu.entrycget(index, 'state')) == 'disabled'
+        assert not app.more_menu.entrycget(index, 'command')
     assert [app.language_menu.entrycget(i, 'label') for i in range(3)] == list(LANGUAGES.values())
     assert app.selected_language.get() == language()
     app.header_actions['help'].invoke()
@@ -255,7 +318,7 @@ def check_connection_help(app, r2_setup):
             ('R2_PUBLIC_BASE_URL', r2_setup, 3),
         ):
             button = publisher.env_help_buttons[key]
-            assert button['text'] == '?' and button.winfo_viewable()
+            assert button['image'] and button.winfo_viewable()
             button.invoke()
             app.update()
             assert app.guide is guide and guide.winfo_viewable()
@@ -389,6 +452,10 @@ def check_portable_release(report_path: Path):
     with patch('publisher_ui.messagebox.askyesno', return_value=True) as first_run, \
          patch.object(Studio, 'report_callback_exception', raise_callback_error):
         app = Studio(locale_code='ru')
+        assert app._active == 'editor' and app.publisher is None
+        assert not (home / 'data').exists()
+        first_run.assert_not_called()
+        app.tabs['publisher'].invoke()
     try:
         first_run.assert_called_once()
         assert app.publisher.root_dir == home / 'data'
@@ -412,7 +479,8 @@ def check_portable_release(report_path: Path):
             Image.new('RGB', (24, 24), 'blue').save(banner)
             generated = run_capture([ffmpeg, '-v', 'error', '-f', 'lavfi', '-i', 'color=red:s=96x160:r=24:d=2',
                                      '-f', 'lavfi', '-i', 'sine=440:duration=2', '-c:v', 'libx264',
-                                     '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', str(video)])
+                                     '-pix_fmt', 'yuv420p', '-bf', '0', '-g', '120', '-sc_threshold', '0',
+                                     '-force_key_frames', '1.25', '-c:a', 'aac', '-shortest', str(video)])
             assert generated.returncode == 0, generated.stderr
             app.show('editor')
             editor = app.editor
@@ -425,28 +493,127 @@ def check_portable_release(report_path: Path):
             editor.cut_banners.set('Наложение баннеров')
             editor.insertions = [dict(time='0.2', duration='0.5', banner=str(banner), kind='overlay',
                                       mode='Без удаления фона', x=0, y=0, width=50, height=50)]
-            with patch('editor_ui.messagebox.showinfo'), \
-                 patch('editor_ui.messagebox.showwarning') as warnings, \
-                 patch('editor_ui.messagebox.showerror') as errors:
-                editor.start_btn.invoke()
-                assert editor.busy
+
+            def export_parts():
+                with patch('editor_ui.messagebox.showinfo'), \
+                     patch('editor_ui.messagebox.showwarning') as warnings, \
+                     patch('editor_ui.messagebox.showerror') as errors:
+                    editor.start_btn.invoke()
+                    assert editor.busy
+                    deadline = time.monotonic() + 25
+                    while editor.busy and time.monotonic() < deadline:
+                        app.update()
+                        time.sleep(.02)
+                    assert not editor.busy
+                    warnings.assert_not_called()
+                    errors.assert_not_called()
+                return [Path(name) for name in editor.rendered_files]
+
+            rendered = export_parts()
+            assert [path.name for path in rendered] == ['Часть 1.mp4', 'Часть 2.mp4']
+            for path in rendered:
+                metadata = probe_media(ffprobe, str(path))
+                assert metadata.has_audio and abs(metadata.duration - 1) < .08
+
+            editor.cut_banners.set('Без баннеров')
+            editor.cut_fast.set(True)
+            editor.cut_name.set('{part}')
+            editor.cut_start.set('68')
+            copied = export_parts()
+            assert [path.name for path in copied] == ['68.mp4', '69.mp4']
+            for path, duration in zip(copied, (1.25, .75)):
+                metadata = probe_media(ffprobe, str(path))
+                assert metadata.has_audio and abs(metadata.duration - duration) < .08
+
+            subtitle_file = scratch / 'субтитри.srt'
+            subtitle_file.write_text('1\n00:00:00,250 --> 00:00:01,500\nЇї ґаджет знімає відео.\n', encoding='utf-8-sig')
+            captioned = scratch / 'відео з субтитрами.mp4'
+            replacement = scratch / 'інше відео.mp4'
+            generated = run_capture([ffmpeg, '-v', 'error', '-f', 'lavfi', '-i', 'color=blue:s=128x72:r=24:d=2.5',
+                                     '-f', 'lavfi', '-i', 'sine=880:duration=2.5', '-c:v', 'libx264',
+                                     '-pix_fmt', 'yuv420p', '-af', 'volume=0.005', '-c:a', 'aac',
+                                     '-shortest', str(replacement)])
+            assert generated.returncode == 0, generated.stderr
+
+            def wait_editor():
                 deadline = time.monotonic() + 25
                 while editor.busy and time.monotonic() < deadline:
                     app.update()
                     time.sleep(.02)
                 assert not editor.busy
-                warnings.assert_not_called()
-                errors.assert_not_called()
-            rendered = [Path(name) for name in editor.rendered_files]
-            assert [path.name for path in rendered] == ['Часть 1.mp4', 'Часть 2.mp4']
-            for path in rendered:
-                metadata = probe_media(ffprobe, str(path))
-                assert metadata.has_audio and abs(metadata.duration - 1) < .08
+
+            with patch('subtitle_ui.filedialog.askopenfilename', return_value=str(replacement)) as choose_file, \
+                 patch('subtitle_ui.filedialog.asksaveasfilename', return_value=str(captioned)), \
+                 patch('subtitle_ui.messagebox.showerror') as subtitle_errors:
+                editor.subtitle_btn.invoke()
+                wait_editor()
+                captions = editor.subtitle_editor
+                captions.top.geometry('640x490')
+                app.update()
+                for button in (captions.open_button, captions.transcribe_button,
+                               captions.play_button, captions.export_button):
+                    assert_inside_window(button)
+                assert captions.source == video
+                assert captions.speech_only.get()
+                captions.speech_only_button.invoke()
+                assert not captions.speech_only.get()
+                captions.speech_only_button.invoke()
+                assert captions.speech_only.get()
+                captions.open_button.invoke()
+                wait_editor()
+                choose_file.assert_called_once()
+                assert captions.source == replacement and captions.file_label.get() == replacement.name
+                assert captions.frame_size == (128, 72) and captions.image.getpixel((0, 0))[2] > 200
+                assert abs(captions.info.duration - 2.5) < .08
+                from subtitle_ui import VAD_MODEL_NAME, _whisper_tools
+                whisper = _whisper_tools()
+                speech_checked = whisper is not None and whisper[1].with_name(VAD_MODEL_NAME).is_file()
+                if speech_checked:
+                    captions.transcribe_button.invoke()
+                    wait_editor()
+                    subtitle_errors.assert_called_once_with(APP_NAME, tr('Речь для субтитров не найдена.'), parent=captions.top)
+                    assert not captions.cues
+                    subtitle_errors.reset_mock()
+                choose_file.return_value = str(subtitle_file)
+                captions.import_button.invoke()
+                wait_editor()
+                assert captions.cues[0].text == 'Її ґаджет знімає відео.'
+                captions.font.set('Montserrat')
+                captions.y.set('24')
+                captions.highlight.set(True)
+                playback_checked = bool(ctypes.windll.winmm.waveOutGetNumDevs())
+                if playback_checked:
+                    captions.time.set(0)
+                    captions.play_button.invoke()
+                    deadline = time.monotonic() + 8
+                    while captions.playback is not None and captions.time.get() < .5 and time.monotonic() < deadline:
+                        app.update()
+                        time.sleep(.02)
+                    assert captions.playback is not None and captions.playback.audio_elapsed >= .49, captions.status.get()
+                    assert captions.canvas.itemcget(captions.caption_item, 'state') == 'normal'
+                    captions.play_button.invoke()
+                    paused_at = captions.time.get()
+                    for _ in range(5):
+                        app.update()
+                        time.sleep(.02)
+                    assert captions.playback is None and captions.time.get() == paused_at
+                captions.export_button.invoke()
+                wait_editor()
+                assert captions.result == captioned
+                captioned_info = probe_media(ffprobe, str(captioned))
+                assert captioned_info.has_audio and (captioned_info.width, captioned_info.height) == (128, 72)
+                captions.cut_button.invoke()
+                assert editor.video_files == [str(captioned)]
+                subtitle_errors.assert_not_called()
+
             report = {'ok': True, 'version': VERSION, 'embedded_python': Path(runtime_path.value).name,
                       'system_path_only': True, 'empty_settings': True, 'workspace': 'JetVideo Data/data',
                       'different_working_directory': True, 'help': {'buffer_images': 5, 'r2_images': 9},
                       'tools': [str(Path(tool).relative_to(folder)) for tool in (ffmpeg, ffprobe)],
-                      'rendered': [path.name for path in rendered], 'png_banner': True, 'audio': True}
+                      'rendered': [path.name for path in rendered], 'png_banner': True, 'audio': True,
+                      'keyframe_parts': [path.name for path in copied], 'subtitles': True,
+                      'subtitle_video_replacement': True, 'subtitle_playback': playback_checked,
+                      'subtitle_speech_filter': speech_checked}
     finally:
         app.destroy()
     report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8')
@@ -469,6 +636,7 @@ def run(report_path: Path, hold=False):
         publisher_ui.initialize_workspace(workspace)
         with patch.object(publisher_ui, 'data_home', return_value=root), \
              patch.object(publisher_ui.ModernApp, '_choose_startup_workspace', return_value=(workspace, root/'preferences.json')), \
+             patch('ui_motion.enabled', return_value=True), \
              patch.object(studio.Studio, 'report_callback_exception', raise_callback_error), \
              patch.object(editor_ui, 'preference_path', return_value=root/'editor.json'), \
              patch.object(requests, 'post', side_effect=AssertionError('Unexpected network request')), \
@@ -483,6 +651,7 @@ def run(report_path: Path, hold=False):
             checked = {}
             history_rows_visible = {}
             app = studio.Studio(locale_code='ru')
+            assert app._active == 'editor' and app.publisher is None
             for code in LANGUAGES:
                 assert language() == code
                 checked[code], history_rows_visible[code] = check_ui(app)

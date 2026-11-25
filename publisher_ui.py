@@ -13,7 +13,7 @@ import webbrowser
 from datetime import datetime
 from pathlib import Path
 import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, font as tkfont, messagebox, ttk
 from zoneinfo import ZoneInfo
 
 import bot
@@ -24,9 +24,13 @@ import portfolio
 from profiles import ProfileStore
 from insights_ui import InsightsMixin
 from timezone_ui import TimezoneMenu
+from ui_icons import icon
+from ui_motion import Tween
 
 BG = "#090E1A"
 SIDEBAR = "#101829"
+NAV_SELECTED = "#242847"
+NAV_HOVER = "#19243A"
 PANEL = "#151E30"
 PANEL2 = "#1B2840"
 BORDER = "#2B3850"
@@ -61,8 +65,8 @@ def data_home() -> Path:
         return portable
     if os.name == "nt":
         base = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA")
-        return Path(base) / "JOJO BOT" if base else Path.home() / "JOJO BOT"
-    return Path.home() / ".local" / "share" / "JOJO BOT"
+        return Path(base or Path.home()) / "JetVideo Modern"
+    return Path.home() / ".local" / "share" / "JetVideo Modern"
 
 
 def read_json(path: Path, default):
@@ -230,20 +234,22 @@ class ModernApp(InsightsMixin, tk.Frame):
         self.active_page = "dashboard"
         self.page_map: dict[str, tk.Frame] = {}
         self.nav_buttons: dict[str, tk.Button] = {}
+        self.nav_icons: dict[str, tuple[tk.PhotoImage, tk.PhotoImage]] = {}
+        self.nav_motion = Tween(self)
         self.history_rows = {}
         self._visible_history = []
         self._history_scope = self.root_dir
         self.titles = {
-            "dashboard": (tr('Главная'), tr('Управление публикациями выбранного TikTok-аккаунта')),
+            "dashboard": (tr('Главная'), ""),
             "history": (tr('История публикаций'), ""),
-            "accounts": (tr('Аккаунты'), tr('Все TikTok-профили и каналы Buffer в одном месте')),
+            "accounts": (tr('Аккаунты'), tr('Общие ключи Buffer + R2, но отдельные очереди, расписания и видео.')),
             "insights": (tr('Статистика'), tr('Просмотры, лайки и реакции по всем TikTok-аккаунтам')),
             "sync": (tr('Синхронизация'), tr('Поиск удалённых постов и исправление статусов Buffer')),
             "schedule": (tr('Расписание'), tr('Настрой частоту и время выхода частей')),
             "episodes": (tr('Сезоны и серии'), tr('Соответствие номеров частей эпизодам')),
             "captions": (tr('Подписи и теги'), tr('Шаблоны публикаций TikTok')),
-            "connections": (tr('Подключения'), tr('Безопасное управление Buffer и R2')),
-            "logs": (tr('Журнал действий'), tr('Подробности проверок, очереди и ошибок')),
+            "connections": (tr('Подключения'), ""),
+            "logs": (tr('Журнал действий'), ""),
         }
         self.configure(bg=BG)
         self._init_style()
@@ -306,7 +312,7 @@ class ModernApp(InsightsMixin, tk.Frame):
         style.configure("Modern.Treeview", font=(FONT, 10), rowheight=34, background=PANEL,
                         foreground=FG, fieldbackground=PANEL, borderwidth=0)
         style.map("Modern.Treeview", background=[("selected", "#39476B")], foreground=[("selected", "#FFFFFF")])
-        style.configure("History.Modern.Treeview", rowheight=30)
+        style.configure("History.Modern.Treeview", rowheight=29)
         style.configure("Modern.Treeview.Heading", font=(FONT, 10, "bold"), foreground=MUTED,
                         background=PANEL2, padding=(11, 11), borderwidth=0, relief="flat")
         style.map("Modern.Treeview.Heading", background=[("active", "#283855")])
@@ -317,6 +323,10 @@ class ModernApp(InsightsMixin, tk.Frame):
                         bordercolor=BORDER, lightcolor=PANEL2, darkcolor=PANEL2,
                         padding=(8, 7), font=(FONT, 11), anchor="w", width=26)
         style.map("Timezone.TMenubutton", background=[("active", "#2B3A59")])
+        style.configure("Actions.TMenubutton", background=PANEL2, foreground=FG, arrowcolor=MUTED,
+                        bordercolor=PANEL2, lightcolor=PANEL2, darkcolor=PANEL2,
+                        padding=(11, 8), font=(FONT, 10, "bold"), focuscolor=ACCENT)
+        style.map("Actions.TMenubutton", background=[("active", NAV_HOVER)])
         for scrollbar in ("Vertical.TScrollbar", "Horizontal.TScrollbar"):
             style.configure(scrollbar, troughcolor=PANEL, background=PANEL2,
                             darkcolor=PANEL2, lightcolor=PANEL2, borderwidth=0)
@@ -326,7 +336,7 @@ class ModernApp(InsightsMixin, tk.Frame):
         return tk.Label(parent, text=text, bg=parent.cget("bg"), fg=color,
                         font=(FONT, size, "bold" if bold else "normal"), **kwargs)
 
-    def button(self, parent, text: str, command, kind="normal", size=10, **kwargs) -> tk.Button:
+    def button(self, parent, text: str, command, kind="normal", size=10, *, glyph=None, **kwargs) -> tk.Button:
         bg, hover, fg = {
             "primary": (ACCENT, ACCENT_HOVER, "#101226"),
             "normal": (PANEL2, "#2B3A59", FG),
@@ -335,11 +345,29 @@ class ModernApp(InsightsMixin, tk.Frame):
         }[kind]
         b = tk.Button(parent, text=text, command=command, bg=bg, fg=fg,
                       activeforeground=fg, activebackground=hover,
-                      borderwidth=0, relief="flat", highlightthickness=0,
-                      cursor="hand2", font=(FONT, size, "bold"), padx=17, pady=10, **kwargs)
+                      borderwidth=0, relief="flat", highlightthickness=1,
+                      highlightbackground=parent.cget("bg"), highlightcolor=ACCENT,
+                      cursor="hand2", font=(FONT, size, "bold"), padx=12, pady=8, **kwargs)
+        if glyph:
+            b.icon = icon(b, glyph, fg, size=15)
+            b.configure(image=b.icon, compound="left", text=f"  {text}")
         b.bind("<Enter>", lambda e: b.configure(bg=hover) if b.cget("state") != "disabled" else None)
         b.bind("<Leave>", lambda e: b.configure(bg=bg) if b.cget("state") != "disabled" else None)
         return b
+
+    def actions_menu(self, parent, items):
+        button = ttk.Menubutton(parent, text=tr('Другие действия'), style="Actions.TMenubutton",
+                                cursor="hand2", takefocus=True)
+        menu = tk.Menu(button, tearoff=False, bg=PANEL2, fg=FG, activebackground=ACCENT,
+                       activeforeground=BG, font=(FONT, 10))
+        for item in items:
+            if item is None:
+                menu.add_separator()
+            else:
+                label, callback = item
+                menu.add_command(label=label, command=callback)
+        button.configure(menu=menu)
+        return button
 
     def entry(self, parent, variable, width=28, secret=False) -> tk.Entry:
         return tk.Entry(parent, textvariable=variable, bg=PANEL2, fg=FG, insertbackground=FG,
@@ -351,203 +379,248 @@ class ModernApp(InsightsMixin, tk.Frame):
         container = tk.Frame(parent, bg=PANEL, highlightthickness=1, highlightbackground=BORDER, **kwargs)
         if title:
             head = tk.Frame(container, bg=PANEL)
-            head.pack(fill="x", padx=22, pady=(18, 13))
+            head.pack(fill="x", padx=17, pady=(13, 9))
             self.label(head, title, 13, FG, True).pack(anchor="w")
             if subtitle:
-                self.label(head, subtitle, 10, MUTED).pack(anchor="w", pady=(3, 0))
+                hint = self.label(head, subtitle, 10, MUTED, justify="left")
+                hint.pack(anchor="w", pady=(3, 0))
+                head.bind("<Configure>", lambda event: hint.configure(wraplength=max(1, event.width)))
         return container
 
     def _build_shell(self):
-        sidebar = tk.Frame(self, bg=SIDEBAR, width=229)
+        sidebar = tk.Frame(self, bg=SIDEBAR, width=212)
         sidebar.pack(side="left", fill="y")
         sidebar.pack_propagate(False)
-        brand = tk.Frame(sidebar, bg=SIDEBAR)
-        brand.pack(fill="x", padx=21, pady=(14, 13))
-        badge = tk.Label(brand, text="J", width=2, height=1, font=(FONT, 18, "bold"),
-                         bg=ACCENT, fg=SIDEBAR)
-        badge.pack(side="left")
-        btext = tk.Frame(brand, bg=SIDEBAR)
-        btext.pack(side="left", padx=11)
-        self.label(btext, PRODUCT_NAME, 15, FG, True).pack(anchor="w")
-        self.label(btext, "AUTOPOST", 8, CYAN, True).pack(anchor="w")
         account_box = tk.Frame(sidebar, bg=PANEL, highlightbackground=BORDER, highlightthickness=1)
-        account_box.pack(fill="x", padx=14, pady=(0, 10))
-        self.label(account_box, tr('АКТИВНЫЙ TIKTOK'), 9, CYAN, True).pack(anchor="w", padx=12, pady=(11, 7))
+        account_box.pack(fill="x", padx=12, pady=(13, 12))
+        account_head = tk.Frame(account_box, bg=PANEL)
+        account_head.pack(fill="x", padx=(10, 6), pady=(5, 1))
+        self.label(account_head, tr('АКТИВНЫЙ TIKTOK'), 9, MUTED, True).pack(side="left")
+        add_account = self.button(account_head, "", self.add_profile, "ghost", glyph="plus")
+        add_account.configure(padx=4, pady=3, text="")
+        add_account.pack(side="right")
+        bind_tooltip(add_account, tr('+  Добавить аккаунт'))
         self.profile_selector = ttk.Combobox(account_box, state="readonly", style="Profile.TCombobox", width=18)
-        self.profile_selector.pack(fill="x", padx=10, pady=(0, 10))
+        self.profile_selector.pack(fill="x", padx=7, pady=(0, 7))
         self.profile_selector.bind("<<ComboboxSelected>>", self._on_profile_selected)
-        self.button(account_box, tr('+  Добавить аккаунт'), self.add_profile, "ghost", 9).pack(fill="x", padx=10, pady=(0, 11))
-        self.label(sidebar, tr('РАБОЧАЯ ПАНЕЛЬ'), 9, MUTED, True).pack(anchor="w", padx=24, pady=(0, 6))
-        nav = [
-            ("dashboard", "▦", tr('Главная')),
-            ("history", "▤", tr('История публикаций')),
-            ("accounts", "◉", tr('Аккаунты')),
-            ("insights", "▥", tr('Статистика')),
-            ("sync", "⇄", tr('Синхронизация')),
-            ("schedule", "◷", tr('Расписание')),
-            ("episodes", "▤", tr('Сезоны и серии')),
-            ("captions", "✎", tr('Подписи и теги')),
-            ("connections", "⌁", tr('Подключения')),
-            ("logs", "≡", tr('Журнал действий')),
-        ]
-        for key, icon, title in nav:
-            b = tk.Button(sidebar, text=f"{icon}   {title}", anchor="w", relief="flat",
-                          borderwidth=0, bg=SIDEBAR, fg=MUTED, activebackground=PANEL2,
-                          activeforeground=FG, highlightthickness=0, cursor="hand2",
-                          font=(FONT, 11), padx=10, pady=3,
+        nav_list = tk.Frame(sidebar, bg=SIDEBAR)
+        nav_list.pack(fill="x")
+        nav = (
+            ("dashboard", "overview"),
+            ("history", "history"),
+            ("insights", "analytics"),
+            None,
+            ("schedule", "schedule"),
+            ("episodes", "clips"),
+            ("captions", "captions"),
+            None,
+            ("accounts", "accounts"),
+            ("connections", "plug"),
+            ("sync", "check"),
+            ("logs", "logs"),
+        )
+        for item in nav:
+            if item is None:
+                tk.Frame(nav_list, bg=BORDER, height=1).pack(fill="x", padx=17, pady=6)
+                continue
+            key, glyph = item
+            row = tk.Frame(nav_list, bg=SIDEBAR)
+            row.pack(fill="x", padx=(12, 9), pady=1)
+            b = tk.Button(row, text=f"  {self.titles[key][0]}", anchor="w", relief="flat",
+                          borderwidth=0, bg=SIDEBAR, fg=MUTED, activebackground=NAV_HOVER,
+                          activeforeground=FG, highlightthickness=1, highlightbackground=SIDEBAR,
+                          highlightcolor=ACCENT, cursor="hand2", font=(FONT, 10), padx=10, pady=3,
                           command=lambda k=key: self.switch(k))
-            b.pack(fill="x", padx=11, pady=1)
+            inactive_image = icon(b, glyph, MUTED)
+            active_image = icon(b, glyph, ACCENT)
+            self.nav_icons[key] = (inactive_image, active_image)
+            b.configure(image=inactive_image, compound="left")
+            b.bind("<Enter>", lambda _event, k=key, button=b: button.configure(bg=NAV_HOVER)
+                   if k != self.active_page else None)
+            b.bind("<Leave>", lambda _event, k=key, button=b: button.configure(bg=SIDEBAR)
+                   if k != self.active_page else None)
+            b.pack(side="left", fill="x", expand=True)
             self.nav_buttons[key] = b
-        sidebar_foot = tk.Frame(sidebar, bg=SIDEBAR)
-        sidebar_foot.pack(side="bottom", fill="x", padx=17, pady=12)
-        sep = tk.Frame(sidebar_foot, bg=BORDER, height=1)
-        sep.pack(fill="x", pady=(0, 8))
-        self.label(sidebar_foot, "●  BUFFER + CLOUDFLARE R2", 9, CYAN, True).pack(anchor="w")
-        self.label(sidebar_foot, f'{PRODUCT_NAME} {VERSION}', 9, MUTED).pack(anchor="w", pady=(6, 0))
+        nav_font = tkfont.Font(self, font=(FONT, 10, "bold"))
+        widest = max(nav_font.measure(button["text"]) for button in self.nav_buttons.values())
+        sidebar.configure(width=max(212, widest + 70))
+        self.nav_indicator = tk.Frame(nav_list, bg=ACCENT, width=3)
 
         content = tk.Frame(self, bg=BG)
         content.pack(side="left", fill="both", expand=True)
         header = tk.Frame(content, bg=BG)
-        header.pack(fill="x", padx=30, pady=(24, 20))
+        header.pack(fill="x", padx=22, pady=(13, 11))
         htxt = tk.Frame(header, bg=BG)
         htxt.pack(side="left")
-        self.header_title = self.label(htxt, tr('Главная'), 25, FG, True)
+        self.header_title = self.label(htxt, tr('Главная'), 21, FG, True)
         self.header_title.pack(anchor="w")
-        self.header_sub = self.label(htxt, tr('Все публикации под контролем'), 10, MUTED)
-        self.header_sub.pack(anchor="w", pady=(3, 0))
-        self.button(header, tr('↗  Открыть Buffer'), lambda: webbrowser.open("https://publish.buffer.com/"),
-                    kind="normal").pack(side="right", pady=6)
+        self.header_sub = self.label(htxt, "", 10, MUTED, wraplength=500, justify="left")
         self.schedule_save_button = self.button(header, tr('✓  Сохранить расписание'), self.save_schedule, "primary")
-        self.history_shortcut = self.button(header, tr('История публикаций'), lambda: self.switch("history"))
+        self.history_shortcut = self.button(header, tr('История публикаций'), lambda: self.switch("history"),
+                                            "ghost", glyph="history")
         self.body = tk.Frame(content, bg=BG)
-        self.body.pack(fill="both", expand=True, padx=30, pady=(0, 12))
+        self.body.pack(fill="both", expand=True, padx=22, pady=(0, 8))
         for k in self.titles:
             f = tk.Frame(self.body, bg=BG)
             f.place(relx=0, rely=0, relwidth=1, relheight=1)
             self.page_map[k] = f
         footer = tk.Frame(content, bg=BG)
-        footer.pack(fill="x", padx=30, pady=(0, 17))
+        footer.pack(fill="x", padx=22, pady=(0, 9))
         self.status_var = tk.StringVar(value=tr('●  Готов к работе'))
         tk.Label(footer, textvariable=self.status_var, bg=BG, fg=GREEN, font=(FONT, 10)).pack(side="left")
         self.workspace_var = tk.StringVar(value="")
-        self.label(footer, tr('ПРОФИЛЬ:'), 9, MUTED, True).pack(side="left", padx=(24, 7))
-        tk.Label(footer, textvariable=self.workspace_var, bg=BG, fg=MUTED, font=(FONT, 9)).pack(side="left")
 
     def switch(self, key: str):
         self.active_page = key
         self.page_map[key].tkraise()
         title, sub = self.titles[key]
         self.header_title.configure(text=title)
-        self.header_sub.configure(text=sub)
+        if sub:
+            self.header_sub.configure(text=sub)
+            self.header_sub.pack(anchor="w", pady=(2, 0))
+        else:
+            self.header_sub.pack_forget()
         if key == "schedule":
-            self.schedule_save_button.pack(side="right", padx=(0, 12), pady=6)
+            self.schedule_save_button.pack(side="right")
         else:
             self.schedule_save_button.pack_forget()
         if key == "dashboard":
-            self.history_shortcut.pack(side="right", padx=(0, 10), pady=6)
+            self.history_shortcut.pack(side="right")
         else:
             self.history_shortcut.pack_forget()
         for k, button in self.nav_buttons.items():
             active = k == key
-            button.configure(bg=PANEL2 if active else SIDEBAR, fg=FG if active else MUTED,
-                             font=(FONT, 11, "bold" if active else "normal"))
+            button.configure(bg=NAV_SELECTED if active else SIDEBAR, fg=FG if active else MUTED,
+                             image=self.nav_icons[k][active], font=(FONT, 10, "bold" if active else "normal"))
+        self.after_idle(self._move_nav_indicator, key)
         if key in ("dashboard", "history"):
             self._refresh_dashboard()
 
+    def _move_nav_indicator(self, key):
+        if key != self.active_page:
+            return
+        row = self.nav_buttons[key].master
+        end = row.winfo_y() + 4
+        start = self.nav_indicator.winfo_y() if self.nav_indicator.winfo_ismapped() else end
+        height = max(1, row.winfo_height() - 8)
+
+        def draw(progress):
+            y = round(start + (end - start) * progress)
+            self.nav_indicator.place(x=9, y=y, height=height)
+
+        if start == end:
+            self.nav_motion.cancel()
+            draw(1)
+        else:
+            self.nav_motion.play(draw)
+
     def _build_dashboard(self):
         page = self.page_map["dashboard"]
-        hero = tk.Frame(page, bg="#1C2342", highlightthickness=1, highlightbackground="#3B3970")
-        hero.pack(fill="x", pady=(0, 16))
-        copy = tk.Frame(hero, bg="#1C2342")
-        copy.pack(side="left", padx=23, pady=16)
-        self.label(copy, tr('ТВОЯ СИСТЕМА ПУБЛИКАЦИЙ'), 9, CYAN, True).pack(anchor="w")
-        self.label(copy, tr('Видео → R2 → Buffer → TikTok'), 17, FG, True).pack(anchor="w", pady=(5, 0))
-        self.label(copy, tr('Подготовь файлы — бот займётся очередью и расписанием.'), 10, MUTED).pack(anchor="w", pady=(5, 0))
-        self.watch_badge = tk.Label(hero, text=tr('● WATCH ВЫКЛ'), bg="#293251", fg=MUTED,
-                                    font=(FONT, 10, "bold"), padx=15, pady=9)
-        self.watch_badge.pack(side="right", padx=22)
+        actions = self.panel(page, tr('Быстрые действия'))
+        actions.configure(highlightbackground="#3B3970")
+        actions.pack(fill="x", pady=(0, 13))
+        primary = tk.Frame(actions, bg=PANEL)
+        primary.pack(fill="x", padx=16, pady=(0, 12))
+        self.add_videos_button = self.button(primary, tr('Добавить видео'), self.add_videos,
+                                             glyph="plus")
+        self.add_videos_button.pack(side="left", padx=(0, 8))
+        self.fill_queue_button = self.button(primary, tr('Заполнить очередь'),
+                                              lambda: self.run_job("fill"), "primary", glyph="upload")
+        self.fill_queue_button.pack(side="left")
+        self.dashboard_actions = self.actions_menu(primary, (
+            (f"{tr('Заполнить очередь')} · {tr('ВСЕ АККАУНТЫ').lower()}",
+             lambda: self.run_job("fill", all_accounts=True)),
+            (tr('✓  Проверить'), lambda: self.run_job("check")),
+            (tr('◷  Предпросмотр'), lambda: self.run_job("plan")),
+            (tr('▶▶  WATCH для всех'), lambda: self.start_watch(all_accounts=True)),
+            None,
+            ("ready", lambda: self.open_folder("videos_folder", "ready")),
+            ("scheduled", lambda: self.open_folder("scheduled_folder", "scheduled")),
+            ("posted", lambda: self.open_folder("posted_folder", "posted")),
+            None,
+            (tr('Открыть Buffer'), lambda: webbrowser.open("https://publish.buffer.com/")),
+        ))
+        self.dashboard_actions.pack(side="right")
+        tk.Frame(actions, bg=BORDER, height=1).pack(fill="x", padx=16)
+        watch = tk.Frame(actions, bg=PANEL)
+        watch.pack(fill="x", padx=16, pady=8)
+        self.watch_badge = self.label(watch, tr('● WATCH ВЫКЛ'), 9, MUTED, True)
+        self.watch_badge.pack(side="left")
+        self.watch_on_btn = self.button(watch, tr('▶  Включить WATCH'), self.start_watch, "ghost", 9)
+        self.watch_off_btn = self.button(watch, tr('■  Остановить WATCH'), self.stop_watch, "danger", 9)
+        self.watch_on_btn.pack(side="right")
 
         stats = tk.Frame(page, bg=BG)
-        stats.pack(fill="x", pady=(0, 16))
+        stats.pack(fill="x")
         self.stats = {}
-        for i, (key, title, color, hint) in enumerate([
-            ("ready", tr('Ожидают загрузки'), ACCENT, tr('Файлы в ready')),
-            ("scheduled", tr('В очереди'), CYAN, tr('Запланированы')),
-            ("posted", tr('Опубликованы'), GREEN, tr('Файлы в posted')),
-            ("history", tr('В истории'), YELLOW, tr('Записей в state')),
-        ]):
+        for column, (key, title, color, glyph) in enumerate((
+            ("ready", tr('Ожидают загрузки'), ACCENT, "video"),
+            ("scheduled", tr('В очереди'), CYAN, "schedule"),
+            ("posted", tr('Опубликованы'), GREEN, "check"),
+            ("history", tr('В истории'), YELLOW, "history"),
+        )):
             card = self.panel(stats)
-            card.grid(row=0, column=i, sticky="nsew", padx=(0 if i == 0 else 9, 0))
-            stats.columnconfigure(i, weight=1)
-            top = tk.Frame(card, bg=PANEL)
-            top.pack(fill="x", padx=18, pady=(16, 3))
-            tk.Label(top, text="●", fg=color, bg=PANEL, font=(FONT, 12)).pack(side="left")
-            self.label(top, title, 10, MUTED).pack(side="left", padx=6)
-            v = tk.StringVar(value="—")
-            tk.Label(card, textvariable=v, fg=FG, bg=PANEL, font=(FONT, 29, "bold")).pack(anchor="w", padx=21)
-            self.label(card, hint, 9, MUTED).pack(anchor="w", padx=21, pady=(1, 15))
-            self.stats[key] = v
-
-        actions = self.panel(page, tr('Быстрые действия'), tr('Для отправки видео нажми «Заполнить очередь» или включи WATCH'))
-        actions.pack(fill="x", pady=(0, 16))
-        a = tk.Frame(actions, bg=PANEL)
-        a.pack(fill="x", padx=20, pady=(0, 15))
-        self.button(a, tr('↑  Текущий аккаунт'), lambda: self.run_job("fill"), "primary").pack(side="left", padx=(0, 8))
-        self.button(a, tr('↑↑  Все аккаунты'), lambda: self.run_job("fill", all_accounts=True), "normal").pack(side="left", padx=(0, 8))
-        self.button(a, tr('✓  Проверить'), lambda: self.run_job("check")).pack(side="left", padx=(0, 8))
-        self.button(a, tr('◷  Предпросмотр'), lambda: self.run_job("plan")).pack(side="left", padx=(0, 8))
-        self.button(a, tr('+  Добавить видео'), self.add_videos).pack(side="left")
-        a2 = tk.Frame(actions, bg=PANEL)
-        a2.pack(fill="x", padx=20, pady=(0, 17))
-        self.watch_on_btn = self.button(a2, tr('▶  Включить WATCH'), self.start_watch, "primary")
-        self.watch_on_btn.pack(side="left", padx=(0, 8))
-        self.button(a2, tr('▶▶  WATCH для всех'), lambda: self.start_watch(all_accounts=True), "normal").pack(side="left", padx=(0, 8))
-        self.watch_off_btn = self.button(a2, tr('■  Остановить WATCH'), self.stop_watch, "danger")
-        self.watch_off_btn.pack(side="left", padx=(0, 8))
-        self.button(a2, "▣ ready", lambda: self.open_folder("videos_folder", "ready"), "ghost", 9).pack(side="left", padx=(0, 6))
-        self.button(a2, "▣ scheduled", lambda: self.open_folder("scheduled_folder", "scheduled"), "ghost", 9).pack(side="left", padx=(0, 6))
-        self.button(a2, "▣ posted", lambda: self.open_folder("posted_folder", "posted"), "ghost", 9).pack(side="left")
+            card.grid(row=0, column=column, sticky="nsew", padx=(0 if column == 0 else 8, 0))
+            stats.columnconfigure(column, weight=1, uniform="stats")
+            badge = tk.Label(card, bg=PANEL2, padx=6, pady=6)
+            badge.icon = icon(badge, glyph, color, size=16)
+            badge.configure(image=badge.icon)
+            badge.pack(anchor="w", padx=12, pady=(12, 2))
+            value = tk.StringVar(value="—")
+            tk.Label(card, textvariable=value, fg=FG, bg=PANEL,
+                     font=(FONT, 22, "bold")).pack(anchor="w", padx=12)
+            self.label(card, title, 9, MUTED, wraplength=120, justify="left").pack(anchor="w", padx=12, pady=(1, 12))
+            self.stats[key] = value
 
     def _build_history(self):
         history = self.panel(self.page_map["history"])
         history.pack(fill="both", expand=True)
-        search = tk.Frame(history, bg=PANEL)
-        search.pack(fill="x", padx=16, pady=(14, 6))
-        self.label(search, tr('Поиск по имени файла или номеру части'), 10, MUTED).pack(side="left", padx=(0, 12))
-        self.history_search = tk.StringVar(self)
-        self.entry(search, self.history_search, width=22).pack(side="left", fill="x", expand=True, ipady=5)
-
         bar = tk.Frame(history, bg=PANEL)
-        bar.pack(fill="x", padx=16, pady=(0, 9))
+        bar.pack(fill="x", padx=12, pady=(11, 8))
+        search = tk.Frame(bar, bg=PANEL)
+        search.pack(side="left", fill="x", expand=True, padx=(0, 12))
+        self.label(search, tr('Поиск по имени файла или номеру части'), 9, MUTED,
+                   wraplength=275, justify="left").pack(anchor="w", pady=(0, 3))
+        self.history_search = tk.StringVar(self)
+        self.entry(search, self.history_search, width=16).pack(fill="x", ipady=6)
         self.history_detail_button = self.button(bar, tr('Подробности'), self.show_history_details, "normal", 9)
-        self.history_detail_button.pack(side="left")
+        self.history_detail_button.pack(side="left", anchor="s")
         self.history_detail_button.configure(state="disabled")
-        self.button(bar, tr('⟳ Обновить'), self._refresh_dashboard, "ghost", 9).pack(side="right")
-        self.button(bar, tr('Сверить Buffer'), lambda: self.run_job('sync'), 'ghost', 9).pack(side='right')
-        self.button(bar, tr('↩ Вернуть в ready'), self.restore_selected_parts, "normal", 9).pack(side="right", padx=(0, 10))
+        self.actions_menu(bar, (
+            (tr('Обновить'), self._refresh_dashboard),
+            (tr('Сверить Buffer'), lambda: self.run_job('sync')),
+            (tr('↩ Вернуть в ready'), self.restore_selected_parts),
+        )).pack(side="right", anchor="s", padx=(7, 0))
 
         table = tk.Frame(history, bg=PANEL)
-        table.pack(fill="both", expand=True, padx=16, pady=(0, 14))
+        table.pack(fill="both", expand=True, padx=12, pady=(0, 10))
         self.history_columns = (
-            ("file", tr('ИМЯ ФАЙЛА'), 300, "w"),
-            ("status", tr('СТАТУС'), 192, "w"),
-            ("due", tr('ПУБЛИКАЦИЯ'), 164, "w"),
-            ("part", tr('ЧАСТЬ'), 70, "center"),
+            ("file", tr('ИМЯ ФАЙЛА'), 221, "w"),
+            ("status", tr('СТАТУС'), 170, "w"),
+            ("due", tr('ПУБЛИКАЦИЯ'), 154, "w"),
+            ("part", tr('ЧАСТЬ'), 62, "center"),
         )
         self.queue_tree = ttk.Treeview(table, columns=[column[0] for column in self.history_columns],
                                        show="headings", style="History.Modern.Treeview", height=8)
         for col, title, width, anchor in self.history_columns:
             self.queue_tree.heading(col, text=title)
-            self.queue_tree.column(col, width=width, minwidth=160 if col == "file" else 60,
+            self.queue_tree.column(col, width=width, minwidth=145 if col == "file" else 60,
                                    anchor=anchor, stretch=col == "file")
         vertical = ttk.Scrollbar(table, orient="vertical", command=self.queue_tree.yview)
         horizontal = ttk.Scrollbar(table, orient="horizontal", command=self.queue_tree.xview)
-        self.queue_tree.configure(yscrollcommand=vertical.set, xscrollcommand=horizontal.set)
+
+        def scroll_horizontal(first, last):
+            horizontal.set(first, last)
+            if float(first) > 0 or float(last) < 1:
+                horizontal.grid(row=1, column=0, sticky="ew")
+            else:
+                horizontal.grid_remove()
+
+        self.queue_tree.configure(yscrollcommand=vertical.set, xscrollcommand=scroll_horizontal)
         table.columnconfigure(0, weight=1)
         table.rowconfigure(0, weight=1)
         self.queue_tree.grid(row=0, column=0, sticky="nsew")
         vertical.grid(row=0, column=1, sticky="ns")
-        horizontal.grid(row=1, column=0, sticky="ew")
         self.history_empty = self.label(table, tr('Нет записей'), 11, MUTED)
         self.history_empty.place(relx=.5, rely=.5, anchor="center")
         self.queue_tree.tag_configure("even", background=PANEL)
@@ -595,8 +668,8 @@ class ModernApp(InsightsMixin, tk.Frame):
 
     def _build_schedule(self):
         page = self.page_map["schedule"]
-        settings = self.panel(page, tr('Основные параметры'), tr('Настройки автоматически применяются при следующем запуске действия'))
-        settings.pack(fill="x", pady=(0, 16))
+        settings = self.panel(page, tr('Основные параметры'))
+        settings.pack(fill="x", pady=(0, 9))
         fields = [
             ("timezone", tr('Часовой пояс'), "text"),
             ("max_queue_posts", tr('Лимит очереди Buffer'), "int"),
@@ -607,12 +680,12 @@ class ModernApp(InsightsMixin, tk.Frame):
         ]
         self.cfg_vars: dict[str, tuple[tk.StringVar, str]] = {}
         form = tk.Frame(settings, bg=PANEL)
-        form.pack(fill="x", padx=22, pady=(0, 19))
+        form.pack(fill="x", padx=17, pady=(0, 7))
         for index, (key, title, typ) in enumerate(fields):
             c = index % 2
             r = index // 2
             box = tk.Frame(form, bg=PANEL)
-            box.grid(row=r, column=c, sticky="ew", padx=(0, 17) if c == 0 else (17, 0), pady=(0, 7))
+            box.grid(row=r, column=c, sticky="ew", padx=(0, 9) if c == 0 else (9, 0), pady=(0, 6))
             label = self.label(box, title, 10, MUTED)
             label.pack(anchor="w", pady=(0, 4))
             v = tk.StringVar()
@@ -626,25 +699,30 @@ class ModernApp(InsightsMixin, tk.Frame):
                 for event in ("<Button-1>", "<Return>", "<space>", "<Down>"):
                     self.timezone_button.bind(event, self._open_timezone_menu)
             else:
-                self.entry(box, v).pack(fill="x", ipady=7)
+                self.entry(box, v).pack(fill="x", ipady=5)
         form.columnconfigure(0, weight=1)
         form.columnconfigure(1, weight=1)
+        self.button(page, tr('Папки ready / scheduled / posted'), self.choose_profile_folders,
+                    "ghost", 9, glyph="folder").pack(side="bottom", anchor="w", pady=(7, 0))
         wins = self.panel(page, tr('Окна публикаций'), tr('По одному ролику в каждое окно. Время выбирается случайно внутри интервала'))
-        wins.pack(fill="both", expand=True, pady=(0, 16))
+        wins.pack(fill="both", expand=True)
         rows = tk.Frame(wins, bg=PANEL)
-        rows.pack(fill="both", expand=True, padx=22, pady=(0, 15))
+        rows.pack(fill="both", expand=True, padx=17, pady=(0, 11))
+        operations = tk.Frame(rows, bg=PANEL)
+        operations.pack(side="right", fill="y", padx=(11, 0))
+        self.button(operations, tr('+ Добавить окно'), self.add_window, size=9).pack(fill="x", pady=(0, 4))
+        self.button(operations, tr('✎ Изменить'), self.edit_window, size=9).pack(fill="x", pady=(0, 4))
+        self.button(operations, tr('− Удалить'), lambda: self.remove_selected(self.windows_tree),
+                    "danger", 9).pack(fill="x")
         self.windows_tree = ttk.Treeview(rows, columns=("start", "end"), show="headings", style="Modern.Treeview", height=3)
         self.windows_tree.heading("start", text=tr('НАЧАЛО'))
         self.windows_tree.heading("end", text=tr('КОНЕЦ'))
         self.windows_tree.column("start", width=160, anchor="center")
         self.windows_tree.column("end", width=160, anchor="center")
+        scroll = ttk.Scrollbar(rows, orient="vertical", command=self.windows_tree.yview)
+        self.windows_tree.configure(yscrollcommand=scroll.set)
+        scroll.pack(side="right", fill="y")
         self.windows_tree.pack(side="left", fill="both", expand=True)
-        operations = tk.Frame(rows, bg=PANEL)
-        operations.pack(side="right", fill="y", padx=(16, 0))
-        self.button(operations, tr('+ Добавить окно'), self.add_window).pack(fill="x", pady=(0, 7))
-        self.button(operations, tr('✎ Изменить'), self.edit_window).pack(fill="x", pady=(0, 7))
-        self.button(operations, tr('− Удалить'), lambda: self.remove_selected(self.windows_tree), "danger").pack(fill="x")
-        self.button(page, tr('Папки ready / scheduled / posted'), self.choose_profile_folders).pack(anchor='w')
 
     def _open_timezone_menu(self, _event):
         self.timezone_menu = TimezoneMenu(self.timezone_button, self.cfg_vars['timezone'][0])
@@ -652,8 +730,10 @@ class ModernApp(InsightsMixin, tk.Frame):
 
     def _build_episodes(self):
         page = self.page_map["episodes"]
+        row = tk.Frame(page, bg=BG)
+        row.pack(side="bottom", fill="x", pady=(8, 0))
         table_panel = self.panel(page, tr('Диапазоны частей'), tr('Нужны только для шаблонов с {season} и {episode}; для обычных видео оставь пустыми'))
-        table_panel.pack(fill="both", expand=True, pady=(0, 16))
+        table_panel.pack(fill="both", expand=True)
         table = tk.Frame(table_panel, bg=PANEL)
         table.pack(fill="both", expand=True, padx=20, pady=(0, 15))
         keys = ("from", "to", "season", "episode")
@@ -665,8 +745,6 @@ class ModernApp(InsightsMixin, tk.Frame):
         self.episode_tree.configure(yscrollcommand=scroll.set)
         self.episode_tree.pack(side="left", fill="both", expand=True)
         scroll.pack(side="right", fill="y")
-        row = tk.Frame(page, bg=BG)
-        row.pack(fill="x")
         self.button(row, tr('+  Добавить диапазон'), self.add_episode).pack(side="left", padx=(0, 9))
         self.button(row, tr('✎  Изменить'), self.edit_episode).pack(side="left", padx=(0, 9))
         self.button(row, tr('−  Удалить'), lambda: self.remove_selected(self.episode_tree), "danger").pack(side="left")
@@ -675,16 +753,20 @@ class ModernApp(InsightsMixin, tk.Frame):
     def _build_captions(self, captions_help):
         page = self.page_map["captions"]
         intro = tk.Frame(page, bg=BG)
-        intro.pack(fill="x", pady=(0, 14))
+        intro.pack(fill="x", pady=(0, 9))
         if captions_help is not None:
             self.captions_help_button = self.button(intro, f"?  {tr('Справка')}", captions_help, size=9)
             self.captions_help_button.configure(padx=10, pady=5, highlightthickness=1,
                                                 highlightbackground=BG, highlightcolor=ACCENT)
             self.captions_help_button.pack(side="right", padx=(12, 0))
         self.label(intro, tr('Переменные: {filename}, {part}, {season}, {episode}, {hashtags}. Сезоны и серии необязательны.'),
-                   11, MUTED, wraplength=550, justify="left").pack(side="left")
+                   10, MUTED, wraplength=490, justify="left").pack(side="left")
+        actions = tk.Frame(page, bg=BG)
+        actions.pack(side="bottom", fill="x", pady=(8, 0))
+        self.button(actions, tr('✓  Сохранить подписи и теги'), self.save_captions, "primary").pack(side="right")
+        self.button(actions, tr('Предпросмотр описания'), self.preview_caption).pack(side="left")
         wrap = tk.Frame(page, bg=BG)
-        wrap.pack(fill="both", expand=True, pady=(0, 17))
+        wrap.pack(fill="both", expand=True)
         left = self.panel(wrap, tr('Шаблоны текста'), tr('Между шаблонами — отдельная строка ---'))
         right = self.panel(wrap, tr('Наборы хэштегов'), tr('Каждая строка = отдельный набор тегов'))
         wrap.grid_rowconfigure(0, weight=1)
@@ -700,33 +782,26 @@ class ModernApp(InsightsMixin, tk.Frame):
                                 highlightthickness=1, highlightbackground=BORDER, relief="flat",
                                 font=(MONO, 11), wrap="word", width=1, padx=13, pady=13, undo=True)
         self.tags_box.pack(fill="both", expand=True, padx=18, pady=(0, 18))
-        self.button(page, tr('✓  Сохранить подписи и теги'), self.save_captions, "primary").pack(anchor="e")
-        self.button(page, tr('Предпросмотр описания'), self.preview_caption).pack(anchor='w')
 
     def _build_connections(self, connection_help):
         page = self.page_map["connections"]
-        info = tk.Frame(page, bg="#1E2F3D", highlightbackground="#315E61", highlightthickness=1)
-        info.pack(fill="x", pady=(0, 17))
-        self.label(info, tr('⌁  Общие ключи Buffer и R2 для всех аккаунтов. .env только на компьютере, не в EXE.'),
-                   11, CYAN).pack(anchor="w", padx=18, pady=16)
         p = self.panel(page, "Buffer + Cloudflare R2", tr('Ключи общие. Канал TikTok каждого профиля выбирается в разделе «Аккаунты»'))
-        p.pack(fill="x", pady=(0, 16))
+        p.pack(fill="x", pady=(0, 10))
         form = tk.Frame(p, bg=PANEL)
-        form.pack(fill="x", padx=23, pady=(0, 19))
+        form.pack(fill="x", padx=17, pady=(0, 11))
         self.env_vars = {}
         self.env_entries = {}
         self.env_help_buttons = {}
         for r, (key, title) in enumerate(ENV_KEYS):
-            self.label(form, title, 10, MUTED).grid(row=r, column=0, sticky="w", pady=10)
+            self.label(form, title, 10, MUTED).grid(row=r, column=0, sticky="w", pady=5)
             var = tk.StringVar()
             entry = self.entry(form, var, secret=key in SECRET_KEYS)
-            entry.grid(row=r, column=1, sticky="ew", padx=(19, 0), pady=7, ipady=9)
+            entry.grid(row=r, column=1, sticky="ew", padx=(15, 0), pady=4, ipady=6)
             self.env_vars[key] = var
             self.env_entries[key] = entry
             if connection_help is not None:
-                help_button = self.button(form, '?', lambda name=key: connection_help(name), width=2)
-                help_button.configure(padx=4, pady=4, highlightthickness=1,
-                                      highlightbackground=PANEL, highlightcolor=ACCENT)
+                help_button = self.button(form, "", lambda name=key: connection_help(name), glyph="help")
+                help_button.configure(text="", padx=5, pady=5)
                 help_button.grid(row=r, column=2, padx=(8, 0))
                 bind_tooltip(help_button, tr('Как заполнить {0}').format(title))
                 self.env_help_buttons[key] = help_button
@@ -740,74 +815,70 @@ class ModernApp(InsightsMixin, tk.Frame):
         buttons.pack(fill="x")
         self.button(buttons, tr('✓  Сохранить подключения'), self.save_connections, "primary").pack(side="left", padx=(0, 9))
         self.button(buttons, tr('↻  Проверить подключения'), lambda: self.run_job("check")).pack(side="left")
-        self.button(buttons, tr('⌁  Открыть .env'), lambda: self.open_credentials()).pack(side="right")
+        self.button(buttons, tr('⌁  Открыть .env'), self.open_credentials, "ghost").pack(side="right")
 
     def _build_logs(self):
         page = self.page_map["logs"]
-        wp = self.panel(page, tr('Рабочая папка'), tr('Настройки, история, ключи и видео могут храниться на любом диске'))
-        wp.pack(fill="x", pady=(0, 14))
-        self.label(wp, tr('Здесь хранится всё: profiles.json, аккаунты, история и видео. При переносе старая папка сохраняется.'),
-                   9, MUTED).pack(anchor="w", padx=20, pady=(0, 9))
+        wp = self.panel(page, tr('Рабочая папка'))
+        wp.pack(fill="x", pady=(0, 10))
+        tk.Label(wp, textvariable=self.workspace_var, bg=PANEL, fg=MUTED, font=(FONT, 10),
+                 wraplength=520, justify="left").pack(anchor="w", padx=17, pady=(0, 7))
         wb = tk.Frame(wp, bg=PANEL)
-        wb.pack(fill="x", padx=20, pady=(0, 17))
+        wb.pack(fill="x", padx=17, pady=(0, 11))
         self.button(wb, tr('▣  Открыть workspace'), lambda: reveal(self.workspace_dir), "ghost", 9).pack(side="left", padx=(0, 8))
         self.button(wb, tr('⇄  Подключить папку'), self.change_workspace, "normal", 9).pack(side="left", padx=(0, 8))
         self.button(wb, tr('↗  Перенести на другой диск'), self.migrate_workspace, "primary", 9).pack(side="left")
 
-        p = self.panel(page, tr('Журнал'), tr('Действия выполняются в фоне — окно не зависает'))
+        p = self.panel(page, tr('Журнал'))
         p.pack(fill="both", expand=True)
         bar = tk.Frame(p, bg=PANEL)
-        bar.pack(fill="x", padx=19, pady=(0, 12))
+        bar.pack(fill="x", padx=17, pady=(0, 8))
         self.button(bar, tr('Очистить экран'), lambda: self.log_box.delete("1.0", "end"), "ghost", 9).pack(side="left", padx=(0, 8))
         self.button(bar, tr('Копировать'), self.copy_logs, "ghost", 9).pack(side="left", padx=(0, 8))
-        self.log_box = tk.Text(p, bg="#0C1423", fg="#CEDAF1", insertbackground=FG,
+        log_area = tk.Frame(p, bg=PANEL)
+        log_area.pack(fill="both", expand=True, padx=17, pady=(0, 11))
+        self.log_box = tk.Text(log_area, bg="#0C1423", fg="#CEDAF1", insertbackground=FG,
                                selectbackground="#44518B", highlightthickness=1,
                                highlightbackground=BORDER, relief="flat", wrap="word",
                                font=(MONO, 10), padx=14, pady=14, state="disabled")
-        self.log_box.pack(fill="both", expand=True, padx=19, pady=(0, 19))
+        scroll = ttk.Scrollbar(log_area, orient="vertical", command=self.log_box.yview)
+        self.log_box.configure(yscrollcommand=scroll.set)
+        scroll.pack(side="right", fill="y")
+        self.log_box.pack(fill="both", expand=True)
         self.append_log(tr('{0} {1} запущен. Каждый аккаунт имеет собственные видео и историю.\n').format(PRODUCT_NAME, VERSION))
 
     def _build_accounts(self):
         page = self.page_map['accounts']
-        banner = tk.Frame(page, bg='#1C2342', highlightbackground='#3B3970', highlightthickness=1)
-        banner.pack(fill='x', pady=(0, 16))
-        self.label(banner, tr('ОДИН БОТ — НЕСКОЛЬКО TIKTOK-КАНАЛОВ'), 11, CYAN, True).pack(anchor='w', padx=21, pady=(15, 4))
-        self.label(banner, tr('Общие ключи Buffer + R2, но отдельные очереди, расписания и видео.'),
-                   11, FG).pack(anchor='w', padx=21, pady=(0, 16))
-        panel = self.panel(page, tr('Твои аккаунты'), tr('Выбери аккаунт в таблице или переключайся через меню слева'))
-        panel.pack(fill='x', pady=(0, 15))
+        ops = tk.Frame(page, bg=BG)
+        ops.pack(fill='x', pady=(0, 9))
+        self.button(ops, tr('+  Новый аккаунт'), self.add_profile, 'primary').pack(side='left', padx=(0, 7))
+        self.button(ops, tr('⇄  Переключиться'), self.switch_to_selected_profile).pack(side='left', padx=(0, 7))
+        self.button(ops, tr('⌁  Привязать Buffer'), self.bind_profile).pack(side='left')
+        self.actions_menu(ops, (
+            (tr('✎  Переименовать'), self.rename_profile),
+            (tr('▣  Открыть папку'), self.open_profile_folder),
+            (tr('⇢  Архив / восстановить'), self.toggle_profile_archive),
+            (tr('↑↑  Загрузить для всех'), lambda: self.run_job('fill', all_accounts=True)),
+            None,
+            (tr('Удалить профиль'), self.remove_profile),
+        )).pack(side='right')
+        panel = self.panel(page)
+        panel.pack(fill='both', expand=True)
         table = tk.Frame(panel, bg=PANEL)
-        table.pack(fill='x', padx=18, pady=(0, 14))
+        table.pack(fill='both', expand=True, padx=12, pady=12)
         self.accounts_tree = ttk.Treeview(table, columns=('name', 'channel', 'status', 'ready', 'queued', 'posted'),
                                           show='headings', style='Modern.Treeview', height=5)
         for key, title, width in [
-            ('name', tr('ПРОФИЛЬ'), 190), ('channel', 'TIKTOK / BUFFER', 170), ('status', tr('СОСТОЯНИЕ'), 110),
-            ('ready', 'READY', 67), ('queued', tr('В ОЧЕРЕДИ'), 99), ('posted', 'POSTED', 72)
+            ('name', tr('ПРОФИЛЬ'), 145), ('channel', 'TIKTOK / BUFFER', 135), ('status', tr('СОСТОЯНИЕ'), 100),
+            ('ready', 'READY', 59), ('queued', tr('В ОЧЕРЕДИ'), 89), ('posted', 'POSTED', 64)
         ]:
             self.accounts_tree.heading(key, text=title)
             self.accounts_tree.column(key, width=width, minwidth=50, anchor='w' if key in ('name', 'channel', 'status') else 'center')
         sb = ttk.Scrollbar(table, orient='vertical', command=self.accounts_tree.yview)
         self.accounts_tree.configure(yscrollcommand=sb.set)
-        self.accounts_tree.pack(side='left', fill='both', expand=True)
         sb.pack(side='right', fill='y')
+        self.accounts_tree.pack(side='left', fill='both', expand=True)
         self.accounts_tree.bind('<Double-1>', lambda _e: self.switch_to_selected_profile())
-        ops = tk.Frame(page, bg=BG)
-        ops.pack(fill='x', pady=(0, 14))
-        self.button(ops, tr('+  Новый аккаунт'), self.add_profile, 'primary').pack(side='left', padx=(0, 8))
-        self.button(ops, tr('⇄  Переключиться'), self.switch_to_selected_profile).pack(side='left', padx=(0, 8))
-        self.button(ops, tr('⌁  Привязать Buffer'), self.bind_profile).pack(side='left', padx=(0, 8))
-        self.button(ops, tr('✎  Переименовать'), self.rename_profile).pack(side='left', padx=(0, 8))
-        ops2 = tk.Frame(page, bg=BG)
-        ops2.pack(fill='x', pady=(0, 16))
-        self.button(ops2, tr('▣  Открыть папку'), self.open_profile_folder).pack(side='left', padx=(0, 8))
-        self.button(ops2, tr('⇢  Архив / восстановить'), self.toggle_profile_archive, 'ghost').pack(side='left', padx=(0, 8))
-        self.button(ops2, tr('Удалить профиль'), self.remove_profile, 'danger').pack(side='left', padx=(0, 8))
-        self.button(ops2, tr('↑↑  Загрузить для всех'), lambda: self.run_job('fill', all_accounts=True), 'primary').pack(side='right')
-        note = self.panel(page, tr('Как устроены файлы'), tr('Старый аккаунт не перемещается — его история остаётся на месте'))
-        note.pack(fill='x')
-        self.label(note, tr('Первый профиль: workspace/ready, workspace/scheduled, workspace/posted'), 10, FG).pack(anchor='w', padx=20, pady=(0, 7))
-        self.label(note, tr('Новые: workspace/profiles/ID/ready, scheduled, posted + собственные config.json и state.json'),
-                   10, MUTED).pack(anchor='w', padx=20, pady=(0, 17))
 
     def choose_profile_folders(self):
         if self._busy_accounts():
@@ -1327,8 +1398,13 @@ class ModernApp(InsightsMixin, tk.Frame):
             self._render_history()
         except Exception as exc:
             self.status_var.set(tr('Ошибка чтения данных: {0}').format(exc))
-        self.watch_badge.configure(text=tr('● WATCH АКТИВЕН') if self.watch_worker and self.watch_worker.is_alive() else tr('● WATCH ВЫКЛ'),
-                                   fg=GREEN if self.watch_worker and self.watch_worker.is_alive() else MUTED)
+        watching = bool(self.watch_worker and self.watch_worker.is_alive())
+        self.watch_badge.configure(text=tr('● WATCH АКТИВЕН') if watching else tr('● WATCH ВЫКЛ'),
+                                   fg=GREEN if watching else MUTED)
+        button, hidden = (self.watch_off_btn, self.watch_on_btn) if watching else (self.watch_on_btn, self.watch_off_btn)
+        if not button.winfo_manager():
+            hidden.pack_forget()
+            button.pack(side="right")
 
     def restore_selected_parts(self):
         if self._busy_changing_workspace():

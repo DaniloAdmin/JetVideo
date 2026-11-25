@@ -124,6 +124,125 @@ def test_plain_cut_exact_lengths_sound_and_unchanged_source(media,tmp_path):
 
 
 @requires_ffmpeg
+@pytest.mark.parametrize('copy_fails', [False, True])
+def test_whole_short_clip_copies_streams_or_retries_encoding(media, tmp_path, monkeypatch, copy_fails):
+    import video_splitter
+
+    owner, opt = handler(), options(media, tmp_path)
+    opt['clip_duration'] = '00:02:00'
+    if copy_fails:
+        write_plain = video_splitter._write_plain
+
+        def fail_stream_copy(owner, args, target, *args_after_target):
+            if 'copy' in args:
+                Path(target).write_bytes(b'partial export')
+                raise RuntimeError('Stream copy failed')
+            return write_plain(owner, args, target, *args_after_target)
+
+        monkeypatch.setattr(video_splitter, '_write_plain', fail_stream_copy)
+
+    run_split(owner, opt)
+    events = list(owner.events.queue)
+    assert ('done', 1, 0, opt['output']) in events, events
+    output = Path(opt['output']) / 'часть 7.mp4'
+    assert list(output.parent.iterdir()) == [output]
+    assert probe_media(media['ffprobe'], str(output)).has_audio
+    assert hashlib.sha256(media['source'].read_bytes()).digest() == media['digest']
+    if copy_fails:
+        assert ('log', tr('Копирование потоков не удалось. Сохраняю с перекодированием.')) in events
+    else:
+        assert ('log', tr('Фрагмент сохранён без перекодирования.')) in events
+
+        def stream_hashes(path):
+            return subprocess.check_output([
+                media['ffmpeg'], '-v', 'error', '-i', str(path), '-map', '0:v:0',
+                '-map', '0:a:0', '-c', 'copy', '-f', 'streamhash', 'pipe:1',
+            ])
+
+        assert stream_hashes(output) == stream_hashes(media['source'])
+
+
+@pytest.fixture
+def keyframe_media(media, tmp_path):
+    source = tmp_path / 'Серия %.mp4'
+    subprocess.run([
+        media['ffmpeg'], '-v', 'error', '-f', 'lavfi', '-i', 'testsrc2=s=160x280:r=24:d=5.25',
+        '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000:duration=5.25',
+        '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-bf', '0', '-g', '240', '-sc_threshold', '0',
+        '-force_key_frames', '2.5,4.5', '-c:a', 'aac', str(source),
+    ], check=True)
+    return {**media, 'source': source, 'digest': hashlib.sha256(source.read_bytes()).digest()}
+
+
+@requires_ffmpeg
+@pytest.mark.parametrize(('keep_tail', 'expected'), [(True, (2.5, 2, .75)), (False, (2.5, 2))])
+def test_fast_segments_follow_keyframes_and_number_across_sources(keyframe_media, tmp_path, keep_tail, expected):
+    owner, opt = handler(), options(keyframe_media, tmp_path)
+    opt.update(videos=[str(keyframe_media['source'])] * 2, output=str(tmp_path / 'результат %'),
+               start_part=68, name_template='{part}', keep_tail=keep_tail, split_fast=True)
+    output = Path(opt['output'])
+    output.mkdir()
+    original = output / '68.mp4'
+    original.write_bytes(b'existing clip')
+
+    run_split(owner, opt)
+
+    events = list(owner.events.queue)
+    durations = expected * 2
+    assert ('done', len(durations), 0, opt['output']) in events, events
+    rendered = [Path(event[1]) for event in events if event[0] == 'rendered']
+    assert [path.name for path in rendered] == ['68_2.mp4', *[f'{i}.mp4' for i in range(69, 68 + len(durations))]]
+    for file, duration in zip(rendered, durations):
+        info = probe_media(keyframe_media['ffprobe'], str(file))
+        assert info.has_audio and abs(info.duration - duration) < .08, (file, info)
+    assert set(output.iterdir()) == {original, *rendered}
+    assert original.read_bytes() == b'existing clip'
+    assert hashlib.sha256(keyframe_media['source'].read_bytes()).digest() == keyframe_media['digest']
+
+
+@requires_ffmpeg
+def test_fast_cut_cancel_saves_only_closed_segments(keyframe_media, tmp_path, monkeypatch):
+    import time
+
+    owner, opt = handler(), options(keyframe_media, tmp_path)
+    opt.update(split_fast=True, keep_tail=False)
+    popen = subprocess.Popen
+
+    def pace_input(args, **kwargs):
+        if '-segment_list' in args:
+            seek = args.index('-i')
+            args = args[:seek] + ['-readrate', '1'] + args[seek:]
+        return popen(args, **kwargs)
+
+    monkeypatch.setattr(subprocess, 'Popen', pace_input)
+    monitor = owner._monitor_cancel
+
+    def cancel_after_first_clip(proc):
+        def wait_for_closed_clip():
+            while proc.poll() is None:
+                manifest = next(Path(opt['output']).glob('.jojo-segments-*/parts.csv'), None)
+                try:
+                    if manifest and '\n' in manifest.read_text(encoding='utf-8'):
+                        owner.cancel_event.set()
+                        break
+                except FileNotFoundError:
+                    pass
+                time.sleep(.03)
+
+        monitor(proc)
+        threading.Thread(target=wait_for_closed_clip, daemon=True).start()
+
+    owner._monitor_cancel = cancel_after_first_clip
+    run_split(owner, opt)
+
+    events = list(owner.events.queue)
+    assert ('cancelled', 1, 0) in events, events
+    output = Path(opt['output'])
+    assert list(output.iterdir()) == [output / 'часть 7.mp4']
+    assert abs(probe_media(keyframe_media['ffprobe'], str(output / 'часть 7.mp4')).duration - 2.5) < .08
+
+
+@requires_ffmpeg
 def test_overlay_repeats_on_clip_local_clock_and_skips_short_tail(media,tmp_path):
     owner, opt = handler(), options(media,tmp_path,'overlay')
     run_split(owner,opt)
@@ -258,7 +377,7 @@ def test_silent_video_can_be_split_without_audio_stream(tmp_path):
 
 
 @requires_ffmpeg
-@pytest.mark.parametrize('mode', ['cut', 'whole'])
+@pytest.mark.parametrize('mode', ['cut', 'fast', 'whole'])
 def test_ui_starts_export_and_persists_options(media,tmp_path,monkeypatch,mode):
     import time
     import tkinter as tk
@@ -280,7 +399,14 @@ def test_ui_starts_export_and_persists_options(media,tmp_path,monkeypatch,mode):
         editor.cut_name.set('Тест {part:03d}')
         editor.cut_start.set('4')
         editor.cut_tail.set(False)
-        editor.export_mode.set(mode)
+        editor.export_mode.set('whole' if mode == 'whole' else 'cut')
+        editor.cut_fast.set(mode == 'fast')
+        if mode == 'fast':
+            assert editor.cut_fast_toggle.winfo_manager() == 'pack'
+            editor.cut_banners.set('Наложение баннеров')
+            assert not editor.cut_fast_toggle.winfo_manager()
+            editor.cut_banners.set('Без баннеров')
+            assert editor.cut_fast.get() and editor.cut_fast_toggle.winfo_manager() == 'pack'
         if mode == 'whole':
             editor.insertions = [dict(time='0.5', banner=str(media['banner']), kind='overlay',
                                       mode='Без удаления фона', width=50, height=50)]
@@ -292,11 +418,12 @@ def test_ui_starts_export_and_persists_options(media,tmp_path,monkeypatch,mode):
         while editor.busy and time.monotonic()<deadline:
             root.update();time.sleep(.02)
         assert not editor.busy and not errors, errors
-        expected = ['Тест 004.mp4', 'Тест 005.mp4'] if mode == 'cut' else ['input_with_ad.mp4']
-        assert [Path(p).name for p in editor.rendered_files] == expected
+        expected = {'cut': ['Тест 004.mp4', 'Тест 005.mp4'], 'fast': ['Тест 004.mp4'], 'whole': ['input_with_ad.mp4']}
+        assert [Path(p).name for p in editor.rendered_files] == expected[mode]
         assert len(editor.video_list.get(0,'end'))==1
         prefs=editor_ui.load_preferences(tmp_path/'prefs.json')
         assert prefs['cut_duration']=='00:00:02' and prefs['cut_start']=='4' and not prefs['cut_tail']
-        assert prefs['export_mode'] == mode
+        assert prefs['export_mode'] == ('whole' if mode == 'whole' else 'cut')
+        assert prefs['cut_fast'] == (mode == 'fast')
     finally:
         root.destroy()

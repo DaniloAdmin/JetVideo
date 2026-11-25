@@ -33,6 +33,7 @@ class MediaInfo:
     fps: str
     has_audio: bool
     codec: str = ''
+    can_remux_mp4: bool = False
 
 
 def run_capture(args: list[str]) -> subprocess.CompletedProcess:
@@ -56,12 +57,14 @@ def probe_media(ffprobe: str, path: str) -> MediaInfo:
         raise RuntimeError(cp.stderr.strip() or tr('FFprobe не смог прочитать файл.'))
     data = json.loads(cp.stdout)
     streams = data.get("streams", [])
+    container = data.get("format", {})
     v = next((s for s in streams if s.get("codec_type") == "video"), None)
     if not v:
         raise RuntimeError(tr('В выбранном файле не найден видеопоток.'))
+    audio = next((s for s in streams if s.get('codec_type') == 'audio'), None)
     duration_values = []
-    if data.get("format", {}).get("duration"):
-        duration_values.append(float(data["format"]["duration"]))
+    if container.get("duration"):
+        duration_values.append(float(container["duration"]))
     if v.get("duration"):
         duration_values.append(float(v["duration"]))
     if not duration_values:
@@ -75,8 +78,19 @@ def probe_media(ffprobe: str, path: str) -> MediaInfo:
         fps = f"{rate.numerator}/{rate.denominator}"
     except Exception:
         fps = "30/1"
-    return MediaInfo(duration, int(v.get("width", 0)), int(v.get("height", 0)), fps,
-                     any(s.get("codec_type") == "audio" for s in streams), v.get('codec_name', ''))
+    width, height = int(v.get('width', 0)), int(v.get('height', 0))
+    codec = v.get('codec_name', '')
+    can_remux_mp4 = (
+        Path(path).suffix.lower() == '.mp4'
+        and 'mp4' in container.get('format_name', '').split(',')
+        and container.get('start_time') == v.get('start_time') == '0.000000'
+        and codec == 'h264' and v.get('pix_fmt') == 'yuv420p'
+        and width > 0 and height > 0 and width % 2 == 0 and height % 2 == 0
+        and not v.get('disposition', {}).get('attached_pic')
+        and not any(side.get('side_data_type') == 'Display Matrix' for side in v.get('side_data_list', []))
+        and (audio is None or (audio.get('codec_name') == 'aac' and audio.get('start_time') == '0.000000'))
+    )
+    return MediaInfo(duration, width, height, fps, audio is not None, codec, can_remux_mp4)
 
 
 def parse_time(value: str) -> float:
@@ -612,7 +626,7 @@ class VideoAdInserter:
             args += ["-filter_complex", ";".join(filters), "-map", "[vout]"]
             if audio_needed:
                 args += ["-map", "[aout]"]
-            args += ["-c:v", "libx264", "-preset", "medium", "-crf", str(opt["crf"]),
+            args += ["-c:v", "libx264", "-preset", opt.get("x264_preset", "medium"), "-crf", str(opt["crf"]),
                      "-pix_fmt", "yuv420p", "-movflags", "+faststart"]
             if audio_needed:
                 args += ["-c:a", "aac", "-b:a", "192k"]

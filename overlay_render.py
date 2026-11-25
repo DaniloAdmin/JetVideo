@@ -30,7 +30,7 @@ def render_overlay(owner, opt, source, target, info, entries, index, total):
                        f"enable='between(t,{start},{start+duration})'[base{i+1}]")
     filters.append(f'[base{len(entries)}]{PAD_TO_EVEN}[vout]')
     args += ['-filter_complex_threads', '1', '-filter_complex', ';'.join(filters), '-map', '[vout]',
-             '-map', '0:a?', '-t', str(info.duration), '-c:v', 'libx264', '-preset', 'medium',
+             '-map', '0:a?', '-t', str(info.duration), '-c:v', 'libx264', '-preset', opt.get('x264_preset', 'medium'),
              '-crf', str(opt['crf']), '-pix_fmt', 'yuv420p', '-c:a', 'aac',
              '-movflags', '+faststart', '-progress', 'pipe:1', '-nostats', '-loglevel', 'error', '-f', 'mp4', target]
     with tempfile.TemporaryFile(mode='w+', encoding='utf-8') as errors:

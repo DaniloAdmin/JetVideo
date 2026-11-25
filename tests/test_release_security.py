@@ -42,9 +42,15 @@ def test_packaging_writes_manifest_in_clean_checkout(tmp_path, monkeypatch):
     ffmpeg_source = dist / 'ffmpeg-source.zip'
     with ZipFile(ffmpeg_source, 'w') as archive:
         archive.writestr('BINARY_SHA256.json', json.dumps({name: digest(tools / name) for name in package_release.TOOLS}))
+    whisper = tools / 'whisper'
+    whisper.mkdir()
+    for name in package_release.WHISPER_FILES:
+        (whisper / name).write_bytes(name.encode())
+    (whisper / 'local-log.txt').write_bytes(b'not a release component')
     output = tmp_path / 'release' / 'test'
     package_release.main(['--executable', str(dist / EXE_NAME), '--output', str(output),
-                          '--ffmpeg-directory', str(tools), '--ffmpeg-source', str(ffmpeg_source)])
+                          '--ffmpeg-directory', str(tools), '--ffmpeg-source', str(ffmpeg_source),
+                          '--whisper-directory', str(whisper)])
     manifest = tmp_path / 'verification' / 'source-manifest.json'
     assert 'README.uk.md' in json.loads(manifest.read_text(encoding='utf-8'))
     with ZipFile(next(output.glob('*-Windows-x64.zip'))) as archive:
@@ -53,6 +59,9 @@ def test_packaging_writes_manifest_in_clean_checkout(tmp_path, monkeypatch):
         assert archive.read('LICENSE') == b'fixture'
         assert archive.read('tools/ffmpeg.exe') == b'ffmpeg.exe'
         assert archive.read('tools/ffprobe.exe') == b'ffprobe.exe'
+        for name in package_release.WHISPER_FILES:
+            assert archive.read(f'tools/whisper/{name}') == name.encode()
+        assert 'tools/whisper/local-log.txt' not in archive.namelist()
     (tools / 'ffprobe.exe').write_bytes(b'mismatched fixture')
     with pytest.raises(ValueError, match='hashes do not match'):
         package_release.verify_ffmpeg(tools, ffmpeg_source)

@@ -2,16 +2,19 @@
 
 [English](README.md) · [Українська](README.uk.md) · [Русский](README.ru.md)
 
-**JetVideo turns long videos into numbered clips, adds timed banners, and schedules TikTok posts.** Use the built-in editor on its own or send your finished clips to a publishing queue.
+**JetVideo splits long videos into numbered clips, adds timed banners, and generates Russian or Ukrainian subtitles offline.** Send finished clips to a TikTok publishing queue through Buffer and Cloudflare R2.
 
-**[Download JetVideo 1.0.0 for Windows](https://github.com/DaniloAdmin/JetVideo/releases/download/v4.3.0/JetVideo-1.0.0-Windows-x64.zip)** · [Release notes, checksums and source archives](https://github.com/DaniloAdmin/JetVideo/releases/tag/v4.3.0)
+**[Download JetVideo 1.1.0 for Windows x64](https://github.com/DaniloAdmin/JetVideo/releases/download/v1.1.0/JetVideo-1.1.0-Windows-x64.zip)** · [Release notes, checksums and source archives](https://github.com/DaniloAdmin/JetVideo/releases/tag/v1.1.0)
 
-Extract the entire ZIP and open `JetVideo.exe` on Windows 10 or 11 (64-bit). Python, FFmpeg and FFprobe are included. The app and its illustrated help are available in English, Ukrainian and Russian.
+Extract the entire ZIP and run `JetVideo.exe` on 64-bit Windows 10 or 11. FFmpeg, FFprobe, Whisper and both subtitle models are included. The editor and its illustrated help are available in English, Ukrainian and Russian.
 
-| What you want to do | What JetVideo offers |
-| --- | --- |
-| Edit videos on your PC | Split videos by duration, name clips `Part 1`, `Part 2` and so on, and optionally add an image or video banner at a chosen time in each clip. No account setup is needed for editing. |
-| Schedule TikTok posts | Queue clips for connected TikTok channels, choose publishing windows and time zones, add captions and hashtags, and review posting history. You'll need your own Buffer account with a connected TikTok channel and a Cloudflare R2 bucket. |
+## What's new in 1.1.0
+
+- **Redesigned dark interface.** Icon-led tabs, short transitions, separate subtitle editing and styling tabs, and more room for posting history in smaller windows.
+- **Offline subtitles.** Transcribe Russian or Ukrainian speech or load an SRT. Play the video with sound, correct phrases, adjust position and style, then save an SRT or export an MP4 with the subtitles in the picture.
+- **Fast splitting.** With banners off, keyframe mode copies the video and audio without re-encoding. Clip durations can vary with keyframe spacing.
+
+Editing works without an account. TikTok scheduling requires your own Buffer account with a connected TikTok channel and a Cloudflare R2 bucket.
 
 **Cloudflare R2 for TikTok publishing.** R2 Standard includes 10 GB of storage throughout the month and a monthly allowance of requests at no charge. To activate R2, add a supported bank card or another accepted payment method in Cloudflare. Cloudflare charges for storage or requests above the free limits. [R2 pricing](https://developers.cloudflare.com/r2/pricing/#free-tier) · [Cloudflare payment methods](https://developers.cloudflare.com/billing/get-started/create-billing-profile/)
 
@@ -19,24 +22,37 @@ Extract the entire ZIP and open `JetVideo.exe` on Windows 10 or 11 (64-bit). Pyt
 
 **Split a video.** Open **Video Editor** and click **Add videos**. Select **Split into parts**. For two-minute clips, use `00:02:00` and `Part {part}`. Choose an output folder and click **Start splitting**.
 
-**Schedule your first post.** Create a [Buffer API key](docs/BUFFER_SETUP.md) and set up your [Cloudflare R2 bucket](docs/R2_SETUP.md). Save the credentials in **Publishing → Connections**, link your TikTok channel under **Accounts**, then click **Test connections**. Add one video under **Dashboard** and click **Preview**.
+**Add subtitles.** Open **Video Editor → Subtitles** and select a video. Choose a language and click **Transcribe speech**, or click **Load SRT**. Use **Play** to check the result before exporting.
+
+**Schedule your first post.** Create a [Buffer API key](docs/BUFFER_SETUP.md) and set up your [Cloudflare R2 bucket](docs/R2_SETUP.md). Save the credentials in **Publishing → Connections**, link your TikTok channel under **Accounts**, then click **Test connections**. Add one video under **Dashboard** and select **More actions → Preview**.
 
 Click the **globe** in the top right to switch languages. JetVideo remembers your choice. Click **?** or press **F1** to open this guide. Use the drop-down at the top to jump to a section.
 
 ## First run on Windows
 
-1. Extract the entire ZIP to its own folder and open **JetVideo.exe**. The portable build runs on Windows 10/11 x64.
-2. Select **Yes** on first run to create a workspace under `JetVideo Data` next to the app, or **No** to choose a different workspace. For editing only, select **No**, then cancel the folder picker.
-3. The ZIP includes `tools/ffmpeg.exe` and `tools/ffprobe.exe`. JetVideo finds both after extraction. Keep `JetVideo.portable` beside the EXE so this copy stores its settings separately.
+1. Open **JetVideo.exe** and add a video in **Video Editor**.
+2. Open **Publishing** to set up posting. Select **Yes** to create a workspace under `JetVideo Data`, or **No** to choose a different workspace.
+3. Keep `JetVideo.portable` and `tools` beside the EXE so it finds its tools and stores this copy's settings separately.
 4. To use your own folders for a publishing profile, open **Publishing** → **Schedule** → **ready / scheduled / posted folders**. Give each profile its own folders. Changing a path leaves existing videos in their current location.
 
 ## Split videos
 
-1. Click **Add videos**, or **From Publishing** to select files already in a profile's `ready` folder. Choose **Split into parts**.
+For a quick export, choose **No banners** and enable **Fast, at keyframes (approximate duration)**. JetVideo copies the video and audio without re-encoding. Each new clip starts at the next available keyframe, so lengths can vary. Clear the checkbox when you need exact cuts.
+
+1. Click **Add videos**. To select files already in a profile's `ready` folder, use **⋯ → From Publishing** in the source video panel. Choose **Split into parts**.
 2. Set **Part duration** and **Filename template**. Use seconds, `MM:SS` or `HH:MM:SS` for duration. For a series already in progress, change **Starting number**. `Part {part:03d}` creates `Part 001.mp4`, `Part 002.mp4` and so on. Numbering continues across source files in list order.
 3. Choose **No banners**, **Overlay banners** or **Freeze-frame banners**. When using banners, click **Add banner**, pick a file and set its start time. `00:00:30` starts the banner 30 seconds into **each part**. An overlay keeps the clip's duration. A freeze-frame adds time to the clip.
 4. To keep the short clip at the end, leave **Keep the final short clip** checked. A banner scheduled outside that clip is skipped. Check **Log** for details.
 5. Pick the output folder and click **Start splitting**. When done, click **Open folder** or **Send to Publishing** to copy the output into one or more profiles' `ready` folders. Start scheduling from **Publishing**.
+
+## Add subtitles to a whole video
+
+1. Open **Video Editor → Subtitles** and choose a video. Click **Load SRT** or choose Russian or Ukrainian and click **Transcribe speech**. Transcription uses the bundled Whisper model on your computer.
+2. Click **Play** to check the subtitles against the sound. Use the timeline or select an item under **Phrases** to jump to that moment. To correct the text, click **Apply edit** after making the change.
+3. Drag the subtitles to position them. In **Appearance**, adjust the font, outline, background or active-word highlighting. Word highlighting is approximate with an SRT or when **Speech only** is enabled.
+4. Use **Save SRT** under **Phrases** for a separate subtitle file or **Export MP4** to burn the subtitles into the picture. Use **Send to splitter** to open the exported video for the next cut.
+
+**Speech only** is on by default. It skips audio without detected speech and removes standalone fillers such as “ах” and “ух” from automatic subtitles. Singing may still be detected as speech, and very quiet speech may be missed. Clear the checkbox to transcribe the full audio track. The bundled speech filter uses Silero. [Silero model for whisper.cpp](https://huggingface.co/ggml-org/whisper-vad/blob/main/ggml-silero-v5.1.2.bin)
 
 ## Add banners to whole videos
 
@@ -46,7 +62,7 @@ Click the **globe** in the top right to switch languages. JetVideo remembers you
 
 You can add up to 40 banners per video. **Overlay** supports banners that appear at the same time and keeps the original audio and duration. **Freeze-frame** pauses the source, extends the output and optionally plays the banner's audio. Use one mode for all banners in the same job. Leave at least one frame on both sides of a freeze-frame insertion.
 
-**Save template** and **Load template** are in the **Banners** section. A template stores paths to banner files. Check those paths when moving to another computer. **Cancel** stops encoding and keeps completed outputs. **Log** shows details and errors. Exports preserve the source files and use a new name when the output name is already taken.
+**Save template** and **Load template** are in the **⋯** menu in **Banners**. A template stores paths to banner files. Check those paths when moving to another computer. **Cancel** stops encoding and keeps completed outputs. Use the editor's **Settings** menu to open the processing log. Exports preserve the source files and use a new name when the output name is already taken.
 
 <a name="connections"></a>
 ## Connect Buffer and Cloudflare R2
@@ -74,8 +90,8 @@ Open **Accounts**. Use **New account** to create a profile and **Link Buffer** �
 1. Select a profile and open **Schedule**. Click **Time zone** and choose a city or region. You can search for `Kyiv`, `New York`, or `UTC`. Set publishing windows and a queue limit, then click **Save schedule**. JetVideo schedules one video per window at a random time within it.
 2. Put a test video in the profile's `ready` folder or use **Add videos** on **Dashboard**. Wait until copying finishes and the file reaches the minimum age. By default this takes 15 seconds.
 3. Set up a caption template and preview the result. [Captions and tags](#captions-and-tags)
-4. Return to **Dashboard** and click **Preview**. To fill the queue after review, click **Current account** or **All accounts** and confirm. **Start WATCH** repeats this for the active profile at the configured interval while JetVideo is open.
-5. Check the post in Buffer and TikTok. **Check Buffer** refreshes its state. A video goes from `scheduled` to `posted` after Buffer reports `sent`.
+4. Return to **Dashboard** and select **More actions → Preview**. After review, click **Fill queue** and confirm. For all active profiles, use **More actions → Fill queue · all accounts**. **Start WATCH** repeats this for the active profile at the configured interval while JetVideo is open.
+5. Check the post in Buffer and TikTok. In **Posting history → More actions**, click **Check Buffer** to refresh its state. A video goes from `scheduled` to `posted` after Buffer reports `sent`.
 
 Open **Posting history** from **Dashboard** or the sidebar. Search by filename or part number. Double-click a row or select it and click **Details** to see the full filename, status, date and part number.
 
@@ -83,7 +99,7 @@ Open **Posting history** from **Dashboard** or the sidebar. Search by filename o
 
 `uploaded` means the video reached R2. `scheduled` means Buffer accepted it into the queue. `sent` confirms publication. If the submission response is lost, the item is marked `uncertain`; the R2 copy and the submission record are kept, and automatic retries are blocked.
 
-Stop WATCH and click **Check Buffer** to compare the saved caption, channel and submission time against posts in Buffer. A single clear match restores the record. If there is no match, check both TikTok and Buffer yourself before using **Return to ready**. A missing post in Buffer can be outside its available history. Use a separate fill-queue action when you are ready to try scheduling again.
+Stop WATCH and use **Posting history → More actions → Check Buffer** to compare the saved caption, channel and submission time against posts in Buffer. A single clear match restores the record. If there is no match, check both TikTok and Buffer yourself before using **Return to ready**. A missing post in Buffer can be outside its available history. Use a separate fill-queue action when you are ready to try scheduling again.
 
 Keep `state.json` and its backups. The history protects against duplicate submissions using saved part/post IDs and SHA-256 hashes for videos handled by this version. If the history is damaged, stop WATCH and restore a known-good backup.
 
@@ -125,13 +141,13 @@ Click **Caption preview** and enter a filename and a sample part number, such as
 
 Open **Statistics** and click **Refresh all**. Metrics come from Buffer. A dash indicates missing data, and an asterisk marks an incomplete total. [Buffer metrics documentation](https://developers.buffer.com/guides/post-metrics).
 
-Go to **Sync** → **Check all accounts** to compare saved posts with Buffer. Review the results before using **Apply Buffer statuses**. Use **Check Buffer** on **Dashboard** to check a single profile.
+Go to **Sync** → **Check all accounts** to compare saved posts with Buffer. Review the results before using **Apply Buffer statuses**. To check one profile, use **Posting history → More actions → Check Buffer**.
 
 ## Data, logs and updates
 
-The portable ZIP keeps its settings in `JetVideo Data` beside the EXE, with `data` as the default workspace. Processing and publishing have separate logs. Builds without the portable marker use `%LOCALAPPDATA%\JOJO BOT` and `%APPDATA%\VideoAdInserter` for compatibility with previous versions.
+The portable ZIP keeps its settings in `JetVideo Data` beside the EXE, with `data` as the default workspace. Processing and publishing have separate logs. Builds without the portable marker use `%LOCALAPPDATA%\JetVideo Modern` and `%APPDATA%\JetVideo Modern Editor`.
 
-Before replacing the EXE, stop WATCH, close the app and back up your workspace and editor preferences. Use **Activity log** → **Connect folder** to reconnect an existing workspace. **Move to another drive** copies the workspace and keeps the original folder. Keep the `tools` folder beside the updated EXE.
+To update, stop WATCH, close JetVideo and back up your workspace and editor preferences. Extract the entire new ZIP with its `tools` folder. To reuse an existing workspace, choose it when opening **Publishing** for the first time or use **Activity log → Connect folder**. **Move to another drive** copies the workspace and keeps the original folder.
 
 ## Troubleshooting
 
@@ -143,18 +159,18 @@ Before replacing the EXE, stop WATCH, close the app and back up your workspace a
 | R2 upload works but the video URL fails | Public domain, direct HTTPS URL and bucket settings |
 | Wrong publishing time | IANA time zone and configured windows |
 | FFmpeg or FFprobe missing | Extract the full ZIP or select FFmpeg under **Settings** |
+| Automatic subtitles unavailable | Extract the entire ZIP and keep `tools/whisper` beside the EXE |
 | Banner missing from a short clip | Set a start time within that clip and check **Log** |
 | Workspace unavailable | Reconnect the original drive or restore the workspace from backup |
 
 ## Header buttons
 
 - **?** opens this guide. **F1** opens it from either main screen.
-- **$** is reserved for voluntary donations.
-- The **headset** is reserved for technical support.
 - The **globe** switches between English, Ukrainian and Russian.
+- **⋯** contains placeholders for support and donations.
 
 ## Development and license
 
 The release uses CPython 3.14.10 x64 with Tkinter. `requirements-build.lock` contains the build dependencies. Run `python -m pytest -q` for tests or `build_windows.bat` to build the EXE and run its smoke test.
 
-JetVideo 1.0.0 corresponds to the `v4.3.0` tag. Copyright © 2026 axegaoo. The JetVideo code is licensed under the GNU GPL, version 3 only (`GPL-3.0-only`). Keep the applicable notices when redistributing copies and make corresponding source available as required when distributing binaries. [License](LICENSE) · [Copyright](COPYRIGHT.md) · [Third-party notices](THIRD_PARTY_NOTICES.md)
+JetVideo 1.1.0 corresponds to the `v1.1.0` tag. Copyright © 2026 axegaoo. The JetVideo code is licensed under the GNU GPL, version 3 only (`GPL-3.0-only`). Keep the applicable notices when redistributing copies and make corresponding source available as required when distributing binaries. [License](LICENSE) · [Copyright](COPYRIGHT.md) · [Third-party notices](THIRD_PARTY_NOTICES.md)

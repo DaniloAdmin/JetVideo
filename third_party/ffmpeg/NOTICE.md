@@ -1,4 +1,4 @@
-# FFmpeg and FFprobe for JetVideo v4.3.0
+# FFmpeg and FFprobe for JetVideo
 
 FFmpeg 9.1 and FFprobe 9.1 are separate programs, built for Windows x64 from the signed FFmpeg release. The programs report GNU GPL version 3 or later. Their configuration enables `gpl`, `version3`, `libx264`, `libdav1d` and `zlib`. Windows provides the imported system DLLs. JetVideo invokes the two executables as separate processes.
 
@@ -11,4 +11,4 @@ FFmpeg 9.1 and FFprobe 9.1 are separate programs, built for Windows x64 from the
 | MinGW-w64 runtime | `14.0.0.r598.ge3d18511f-1` | `mingw-w64/` |
 | GCC runtime objects | MSYS2 GCC `16.2.0-7` | `gcc/` |
 
-Make `FFmpeg-JetVideo-v4.3.0-source.zip` available as a downloadable asset beside the Windows ZIP. It contains the exact source archives, build script, package versions, configuration and hashes of both distributed executables. [FFmpeg release sources](https://ffmpeg.org/download.html)
+Make `FFmpeg-JetVideo-v1.1.0-source.zip` available as a downloadable asset beside the Windows ZIP. It contains the exact source archives, build script, package versions, configuration and hashes of both distributed executables. [FFmpeg release sources](https://ffmpeg.org/download.html)

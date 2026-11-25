@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from i18n import tr
+import csv
 from dataclasses import dataclass, replace
 from fractions import Fraction
 from pathlib import Path
@@ -141,13 +142,8 @@ def banners_for_segment(entries: list[dict], info: MediaInfo, mode: str) -> tupl
     return selected, skipped
 
 
-def _encode_plain(owner, opt, source, target, info, index, total):
-    args = [opt['ffmpeg'], '-hide_banner', '-nostdin', '-y'] + source_input_args(source, opt)
-    args += ['-map', '0:v:0', '-map', '0:a:0?', '-t', f'{info.duration:.9f}',
-             '-vf', f'setpts=PTS-STARTPTS,{PAD_TO_EVEN},format=yuv420p',
-             '-af', 'asetpts=PTS-STARTPTS', '-c:v', 'libx264', '-preset', 'medium',
-             '-crf', str(opt['crf']), '-c:a', 'aac', '-b:a', '192k',
-             '-movflags', '+faststart', '-progress', 'pipe:1', '-nostats', '-loglevel', 'error', '-f', 'mp4', target]
+def _write_plain(owner, args, target, duration, index, total):
+    args += ['-movflags', '+faststart', '-progress', 'pipe:1', '-nostats', '-loglevel', 'error', '-f', 'mp4', target]
     with tempfile.TemporaryFile(mode='w+', encoding='utf-8') as errors:
         with subprocess.Popen(args, stdout=subprocess.PIPE, stderr=errors, text=True,
                               encoding='utf-8', errors='replace',
@@ -156,7 +152,7 @@ def _encode_plain(owner, opt, source, target, info, index, total):
             for line in proc.stdout:
                 if line.startswith('out_time_ms='):
                     try:
-                        pct = max(0, min(99, int(int(line.split('=')[1]) / 1e6 / info.duration * 100)))
+                        pct = max(0, min(99, int(int(line.split('=')[1]) / 1e6 / duration * 100)))
                         owner.events.put(('status', tr('Нарезка {0}/{1}: {2}%').format(index, total, pct)))
                         owner.events.put(('progress', (index - 1) * 100 + pct))
                     except ValueError:
@@ -168,6 +164,129 @@ def _encode_plain(owner, opt, source, target, info, index, total):
         raise RuntimeError(detail or tr('FFmpeg завершился с кодом {0}.').format(code))
 
 
+def _render_plain(owner, opt, job, target, index, total, copy_full, cancel):
+    ffmpeg = [opt['ffmpeg'], '-hide_banner', '-nostdin', '-y']
+    streams = ['-map', '0:v:0', '-map', '0:a:0?']
+    if copy_full:
+        try:
+            _write_plain(owner, ffmpeg + ['-xerror', '-i', job.source] + streams + ['-c', 'copy'],
+                         target, job.duration, index, total)
+        except RuntimeError:
+            if cancel.is_set():
+                raise
+            owner.events.put(('log', tr('Копирование потоков не удалось. Сохраняю с перекодированием.')))
+        else:
+            owner.events.put(('log', tr('Фрагмент сохранён без перекодирования.')))
+            return
+
+    args = ffmpeg + source_input_args(job.source, opt) + streams
+    args += ['-t', f'{job.duration:.9f}', '-vf', f'setpts=PTS-STARTPTS,{PAD_TO_EVEN},format=yuv420p',
+             '-af', 'asetpts=PTS-STARTPTS', '-c:v', 'libx264', '-preset', opt['x264_preset'],
+             '-crf', str(opt['crf']), '-c:a', 'aac', '-b:a', '192k']
+    _write_plain(owner, args, target, job.duration, index, total)
+
+
+def _copy_at_keyframes(owner, opt, source, info, seconds, staging, index, total):
+    args = [opt['ffmpeg'], '-hide_banner', '-nostdin', '-loglevel', 'error', '-xerror',
+            '-i', str(Path(source).resolve()), '-map', '0:v:0', '-map', '0:a:0?', '-c', 'copy',
+            '-progress', 'pipe:1', '-nostats', '-f', 'segment', '-reference_stream', 'v:0',
+            '-segment_time', f'{seconds:.9f}', '-reset_timestamps', '1',
+            '-segment_list', 'parts.csv', '-segment_list_type', 'csv', '-segment_format', 'mp4',
+            '-segment_format_options', 'movflags=+faststart', '%09d.mp4']
+    with tempfile.TemporaryFile(mode='w+', encoding='utf-8') as errors:
+        with subprocess.Popen(args, cwd=staging, stdout=subprocess.PIPE, stderr=errors, text=True,
+                              encoding='utf-8', errors='replace',
+                              creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0) as proc:
+            owner._monitor_cancel(proc)
+            for line in proc.stdout:
+                if line.startswith('out_time_us='):
+                    try:
+                        elapsed = int(line.partition('=')[2]) / 1e6
+                    except ValueError:
+                        continue
+                    percent = max(0, min(99, int(elapsed / info.duration * 100)))
+                    owner.events.put(('status', tr('Быстрая нарезка {0}/{1}: {2}%').format(index, total, percent)))
+                    owner.events.put(('progress', (index - 1) * 100 + percent))
+            code = proc.wait()
+        errors.seek(0)
+        detail = errors.read()[-2500:]
+    return code, detail
+
+
+def _closed_segments(staging: Path) -> list[tuple[Path, float]]:
+    manifest = staging / 'parts.csv'
+    if not manifest.is_file():
+        return []
+    segments = []
+    with manifest.open(encoding='utf-8', newline='') as document:
+        for row in csv.reader(document):
+            if len(row) != 3 or not re.fullmatch(r'[0-9]{9,}\.mp4', row[0]):
+                continue
+            try:
+                duration = float(row[2]) - float(row[1])
+            except ValueError:
+                continue
+            if math.isfinite(duration) and duration > 0:
+                segments.append((staging / row[0], duration))
+    return segments
+
+
+def _run_fast_split(owner, opt, seconds, number, output, cancel):
+    successful = failed = 0
+    template = opt.get('name_template', tr('часть {part}'))
+    total = len(opt['videos'])
+    owner.events.put(('progress_max', max(1, total) * 100))
+    for index, source in enumerate(opt['videos'], start=1):
+        if cancel.is_set():
+            break
+        owner.events.put(('status', tr('Читаю длительность: ') + Path(source).name))
+        try:
+            info = probe_media(opt['ffprobe'], source)
+            if not math.isfinite(info.duration) or info.duration <= 0:
+                raise ValueError(tr('Некорректная длительность исходного видео.'))
+            frame = 1 / float(Fraction(info.fps))
+            if seconds < frame:
+                raise ValueError(tr('Длина части меньше одного кадра исходного видео.'))
+            if cancel.is_set():
+                break
+            owner.events.put(('log', tr('{0}: нарезка по ключевым кадрам без перекодирования.').format(Path(source).name)))
+            with tempfile.TemporaryDirectory(prefix='.jojo-segments-', dir=output) as directory:
+                staging = Path(directory)
+                code, detail = _copy_at_keyframes(owner, opt, source, info, seconds, staging, index, total)
+                clips = _closed_segments(staging)
+                if not clips and code == 0:
+                    raise RuntimeError(tr('FFmpeg не создал ни одного фрагмента.'))
+                if clips and code == 0 and not opt.get('keep_tail', True) and clips[-1][1] + frame / 2 < seconds:
+                    clips.pop()
+                for clip, _ in clips:
+                    try:
+                        target = available_path(output, output_name(template, number, source))
+                        commit_new_file(clip, target)
+                    except (OSError, ValueError) as exc:
+                        failed += 1
+                        owner.events.put(('log', tr('ОШИБКА записи части {0}: {1}').format(number, exc)))
+                    else:
+                        successful += 1
+                        owner.events.put(('rendered', str(target)))
+                        owner.events.put(('log', tr('Готово: ') + target.name))
+                    number += 1
+                if code and not cancel.is_set():
+                    raise RuntimeError(detail or tr('FFmpeg завершился с кодом {0}.').format(code))
+        except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:
+            if not cancel.is_set():
+                failed += 1
+                owner.events.put(('log', tr('ОШИБКА исходника {0}: {1}').format(Path(source).name, exc)))
+        if cancel.is_set():
+            break
+        owner.events.put(('progress', index * 100))
+    if cancel.is_set():
+        owner.events.put(('cancelled', successful, failed))
+    elif successful or failed:
+        owner.events.put(('done', successful, failed, str(output)))
+    else:
+        raise ValueError(tr('Нет фрагментов для нарезки. Проверь исходники, длину части и сохранение короткого остатка.'))
+
+
 def run_split(owner, opt: dict):
     successful = failed = 0
     cancel = getattr(owner, 'cancel_event', threading.Event())
@@ -176,8 +295,11 @@ def run_split(owner, opt: dict):
         name_template = opt.get('name_template', tr('часть {part}'))
         output = Path(opt['output'])
         output.mkdir(parents=True, exist_ok=True)
-        entries = _banners(opt, cancel)
         mode = opt.get('split_banner_mode', 'none')
+        if opt.get('split_fast') and mode == 'none':
+            _run_fast_split(owner, opt, seconds, number, output, cancel)
+            return
+        entries = _banners(opt, cancel)
         jobs = []
         for source in opt['videos']:
             if cancel.is_set():
@@ -203,13 +325,15 @@ def run_split(owner, opt: dict):
             temp = output / f'.jojo-cut-{uuid.uuid4().hex}.mp4.tmp'
             try:
                 info = replace(source_info, duration=job.duration)
-                options = {**opt, 'source_segment': {'start': job.start, 'duration': job.duration}}
+                options = {**opt, 'x264_preset': 'veryfast',
+                           'source_segment': {'start': job.start, 'duration': job.duration}}
                 selected, skipped = banners_for_segment(entries, info, mode)
                 for entry in skipped:
                     owner.events.put(('log', tr('{0}: баннер на {1:g} с пропущен — вне фрагмента длиной {2:g} с.').format(target.name, entry['time'], job.duration)))
                 owner.events.put(('log', tr('[{0}/{1}] {2}: {3:g}–{4:g} с исходника; баннеров {5}.').format(index, len(jobs), target.name, job.start, job.start + job.duration, len(selected))))
                 if not selected:
-                    _encode_plain(owner, options, job.source, str(temp), info, index, len(jobs))
+                    copy_full = source_info.can_remux_mp4 and job.start == 0 and job.duration == source_info.duration
+                    _render_plain(owner, options, job, str(temp), index, len(jobs), copy_full, cancel)
                 elif mode == 'overlay':
                     from overlay_render import render_overlay
                     render_overlay(owner, options, job.source, str(temp), info, selected, index, len(jobs))

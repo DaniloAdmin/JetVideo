@@ -21,7 +21,7 @@ def test_history_fits_normal_window_and_preserves_scroll_and_selection(tmp_path,
     publisher_ui.write_json(path, {"items": records})
     previous_language = language()
     gc.collect()
-    window = Studio(locale_code="ru")
+    window = Studio(locale_code="ru", initial_page="publisher")
     try:
         window.geometry("1080x680")
         window.update()
