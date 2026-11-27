@@ -28,7 +28,7 @@ DOC_IMAGE_SHA256 = {
 PATTERNS = [re.compile(rb'AKIA[0-9A-Z]{16}'),
             re.compile(rb'-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----'),
             re.compile(rb'(?:ghp_|github_pat_)[A-Za-z0-9_]{30,}'),
-            re.compile(rb'(?i)(?:BUFFER_API_KEY|R2_ACCESS_KEY_ID|R2_SECRET_ACCESS_KEY)[\x22\x27]?\s*[=:]\s*[\x22\x27]?([A-Za-z0-9_./+-]{24,})')]
+            re.compile(rb'(?i)(?:BUFFER_API_KEY|R2_ACCESS_KEY_ID|R2_SECRET_ACCESS_KEY|ACRCLOUD_TOKEN)[\x22\x27]?\s*[=:]\s*[\x22\x27]?([A-Za-z0-9_./+-]{24,})')]
 
 def inspect_bytes(label, data):
     findings = []

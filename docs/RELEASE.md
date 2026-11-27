@@ -1,4 +1,4 @@
-# JetVideo 1.1.0 · тег v1.1.0
+# JetVideo 1.1.1 · тег v1.1.1
 
 Portable ZIP содержит JetVideo.exe, FFmpeg и FFprobe, встроенную справку и локализованные README. При запуске этой копии программа создаёт собственную папку JetVideo Data рядом с EXE. Пустой образец .env находится в `.env.example`.
 
@@ -10,14 +10,14 @@ Portable ZIP содержит JetVideo.exe, FFmpeg и FFprobe, встроенн�
 python package_release.py --ffmpeg-directory 'path/to/tools' --ffmpeg-source 'path/to/ffmpeg-source.zip' --whisper-directory 'path/to/whisper' --dependency-sources 'path/to/dependency-sources.zip'
 ```
 
-Выходная папка по умолчанию — `release/v1.1.0`. Ключ `--executable` позволяет указать EXE, собранный в отдельном каталоге. Упаковщик сверяет SHA‑256 FFmpeg и FFprobe с манифестом в архиве исходников и добавляет в пользовательский ZIP локальный Whisper, обе модели и их лицензии.
+Выходная папка по умолчанию — `release/v1.1.1`. Ключ `--executable` позволяет указать EXE, собранный в отдельном каталоге. Упаковщик сверяет SHA‑256 FFmpeg и FFprobe с манифестом в архиве исходников. В пользовательский ZIP входят локальные Whisper Base и фильтр Silero VAD с их лицензиями.
 
 ## Комплект GitHub Release
 
-- `JetVideo-1.1.0-Windows-x64.zip` с переносимой программой.
-- `JetVideo-1.1.0-source.zip` с исходниками приложения и скриптами сборки.
-- `FFmpeg-JetVideo-v1.1.0-source.zip` с соответствующими исходниками FFmpeg и сборочными материалами.
-- `JetVideo-1.1.0-dependency-sources.zip` с исходниками зависимостей, включая Whisper и инструкции по его сборке.
+- `JetVideo-1.1.1-Windows-x64.zip` с переносимой программой.
+- `JetVideo-1.1.1-source.zip` с исходниками приложения и скриптами сборки.
+- `FFmpeg-JetVideo-v1.1.1-source.zip` с соответствующими исходниками FFmpeg и сборочными материалами.
+- `JetVideo-1.1.1-dependency-sources.zip` с исходниками зависимостей, включая Whisper и инструкции по его сборке.
 - `SHA256SUMS.txt` с контрольными суммами.
 - [Описание выпуска](RELEASE_NOTES.md).
 

@@ -8,6 +8,7 @@ import queue
 import re
 import shutil
 import sys
+from tempfile import NamedTemporaryFile
 import threading
 import webbrowser
 from datetime import datetime
@@ -20,7 +21,10 @@ import bot
 from app_info import APP_NAME, PRODUCT_NAME, VERSION, portable_home
 from guide_ui import bind_tooltip
 from handoff import CopyJob, HandoffPlan, transfer
+from music_check import MUSIC_REGIONS, MusicCheckCancelled, MusicCheckError, validate_music_credentials
+from music_preflight import MusicPreflightBlocked, preflight_music
 import portfolio
+from process_lock import WorkspaceBusy, exclusive_workspace
 from profiles import ProfileStore
 from insights_ui import InsightsMixin
 from timezone_ui import TimezoneMenu
@@ -53,7 +57,8 @@ ENV_KEYS = [
     ("R2_BUCKET_NAME", "R2 Bucket"),
     ("R2_PUBLIC_BASE_URL", "R2 Public URL"),
 ]
-SECRET_KEYS = {"BUFFER_API_KEY", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY"}
+MUSIC_ENV_KEYS = ("ACRCLOUD_TOKEN", "ACRCLOUD_REGION", "ACRCLOUD_CONTAINER_ID", "ACR_CHECK_WATCH")
+SECRET_KEYS = {"BUFFER_API_KEY", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "ACRCLOUD_TOKEN"}
 
 
 def bundled(name: str) -> Path:
@@ -188,17 +193,22 @@ def parse_env(path: Path) -> dict[str, str]:
 
 
 def save_env(path: Path, values: dict[str, str]):
-    bot._secrets.update(values.get(k, '') for k in SECRET_KEYS)
+    merged = parse_env(path)
+    merged.update(values)
+    bot._secrets.update(merged.get(k, '') for k in SECRET_KEYS)
     lines = [f"# {PRODUCT_NAME} credentials — private, never share this file."]
-    for key, _ in ENV_KEYS:
-        val = values.get(key, "").replace("\\", "\\\\").replace('"', '\\"').replace("\n", "")
+    keys = [name for name, _ in ENV_KEYS] + [name for name in MUSIC_ENV_KEYS if name in merged]
+    for key in keys:
+        val = merged.get(key, "").replace("\\", "\\\\").replace('"', '\\"').replace("\r", "").replace("\n", "")
         lines.append(f'{key}="{val}"')
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    stream = NamedTemporaryFile(mode='w', encoding='utf-8', dir=path.parent, prefix='.env-', suffix='.tmp', delete=False)
+    temporary = Path(stream.name)
     try:
-        if os.name != "nt":
-            path.chmod(0o600)
-    except OSError:
-        pass
+        with stream:
+            stream.write("\n".join(lines) + "\n")
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def reveal(path: Path):
@@ -215,8 +225,9 @@ def reveal(path: Path):
 
 
 class ModernApp(InsightsMixin, tk.Frame):
-    def __init__(self, master, *, connection_help=None, captions_help=None):
+    def __init__(self, master, *, connection_help=None, captions_help=None, music_help=None):
         super().__init__(master, bg=BG)
+        self.music_help = music_help
         self.home = data_home()
         try:
             self.workspace_dir, self.preferences = self._choose_startup_workspace()
@@ -231,6 +242,7 @@ class ModernApp(InsightsMixin, tk.Frame):
         self.migrating = False
         self.watch_worker: threading.Thread | None = None
         self.watch_stop = threading.Event()
+        self.music_stop = threading.Event()
         self.active_page = "dashboard"
         self.page_map: dict[str, tk.Frame] = {}
         self.nav_buttons: dict[str, tk.Button] = {}
@@ -532,6 +544,7 @@ class ModernApp(InsightsMixin, tk.Frame):
              lambda: self.run_job("fill", all_accounts=True)),
             (tr('✓  Проверить'), lambda: self.run_job("check")),
             (tr('◷  Предпросмотр'), lambda: self.run_job("plan")),
+            (tr('Проверить музыку'), self.open_music_check),
             (tr('▶▶  WATCH для всех'), lambda: self.start_watch(all_accounts=True)),
             None,
             ("ready", lambda: self.open_folder("videos_folder", "ready")),
@@ -835,6 +848,7 @@ class ModernApp(InsightsMixin, tk.Frame):
         bar.pack(fill="x", padx=17, pady=(0, 8))
         self.button(bar, tr('Очистить экран'), lambda: self.log_box.delete("1.0", "end"), "ghost", 9).pack(side="left", padx=(0, 8))
         self.button(bar, tr('Копировать'), self.copy_logs, "ghost", 9).pack(side="left", padx=(0, 8))
+        self.music_cancel_button = self.button(bar, tr('Отменить проверку музыки'), self.music_stop.set, "danger", 9)
         log_area = tk.Frame(p, bg=PANEL)
         log_area.pack(fill="both", expand=True, padx=17, pady=(0, 11))
         self.log_box = tk.Text(log_area, bg="#0C1423", fg="#CEDAF1", insertbackground=FG,
@@ -1482,12 +1496,98 @@ class ModernApp(InsightsMixin, tk.Frame):
             err = None
             try:
                 portfolio.watch_profiles(workspace, ids, self.watch_stop)
+            except MusicPreflightBlocked as exc:
+                self.messages.put(('watch_music_blocked', str(exc)))
+                return
             except Exception as exc:
                 err = f'{type(exc).__name__}: {exc}'
             self.messages.put(('watch_done', err))
         self.watch_worker = threading.Thread(target=work, name='jojo-watch', daemon=True)
         self.watch_worker.start()
         self._refresh_dashboard()
+
+    def open_music_check(self):
+        if self._busy_changing_workspace():
+            return
+        credentials = self.workspace_dir / '.env'
+        settings = parse_env(credentials)
+        dialog = tk.Toplevel(self, name='music_settings')
+        dialog.withdraw()
+        dialog.title(tr('Проверка музыки'))
+        dialog.transient(self.winfo_toplevel())
+        dialog.configure(bg=PANEL, padx=16, pady=14)
+        self.label(dialog, tr('ACRCloud получает аудио роликов из ready и ищет музыку в своём каталоге.'), 10, MUTED,
+                   wraplength=435, justify='left').pack(anchor='w', pady=(0, 10))
+        form = tk.Frame(dialog, name='credentials', bg=PANEL)
+        form.pack(fill='x')
+        form.columnconfigure(1, weight=1)
+        token = tk.StringVar(dialog, settings.get('ACRCLOUD_TOKEN', ''))
+        region = tk.StringVar(dialog, settings.get('ACRCLOUD_REGION') or MUSIC_REGIONS[0])
+        container = tk.StringVar(dialog, settings.get('ACRCLOUD_CONTAINER_ID', ''))
+        rows = (
+            ('ACRCloud API Token', self.entry(form, token, secret=True)),
+            (tr('Регион контейнера'), ttk.Combobox(form, textvariable=region, values=MUSIC_REGIONS, state='readonly')),
+            ('File Scanning Container ID', self.entry(form, container)),
+        )
+        for row, (label, field) in enumerate(rows):
+            self.label(form, label, 9).grid(row=row, column=0, sticky='w', padx=(0, 10), pady=4)
+            field.grid(row=row, column=1, sticky='ew', pady=4)
+        enabled = tk.BooleanVar(dialog, settings.get('ACR_CHECK_WATCH') == '1')
+        tk.Checkbutton(dialog, text=tr('Проверять перед WATCH и отправкой'), variable=enabled, bg=PANEL, fg=FG,
+                       activebackground=PANEL, activeforeground=FG, selectcolor=PANEL2).pack(anchor='w', pady=(9, 5))
+        if self.music_help is not None:
+            self.button(dialog, tr('Справка'), lambda: self.music_help(dialog), 'ghost', 9,
+                        glyph='help').pack(anchor='w')
+        buttons = tk.Frame(dialog, bg=PANEL)
+        buttons.pack(fill='x', pady=(10, 0))
+
+        def accept(scan=False):
+            values = dict(zip(MUSIC_ENV_KEYS, (token.get().strip(), region.get(), container.get().strip(),
+                                               '1' if enabled.get() else '0')))
+            try:
+                if scan or enabled.get():
+                    validate_music_credentials(*(values[key] for key in MUSIC_ENV_KEYS[:3]))
+                with exclusive_workspace(self.workspace_dir):
+                    save_env(credentials, values)
+            except (MusicCheckError, WorkspaceBusy, OSError) as exc:
+                messagebox.showerror(tr('Проверка музыки'), str(exc), parent=dialog)
+                return
+            dialog.destroy()
+            if scan:
+                self._scan_ready_music(values)
+
+        self.button(buttons, tr('Проверить ready'), lambda: accept(True), 'primary', 9).pack(side='left')
+        self.button(buttons, tr('Сохранить'), accept, 'normal', 9).pack(side='left', padx=6)
+        self.button(buttons, tr('Отмена'), dialog.destroy, 'ghost', 9).pack(side='right')
+        dialog.bind('<Escape>', lambda _event: dialog.destroy())
+        dialog.resizable(False, False)
+        dialog.deiconify()
+        dialog.grab_set()
+
+    def _scan_ready_music(self, credentials):
+        workspace = self.workspace_dir
+        ready = self._folder('videos_folder', 'ready')
+        self.music_stop.clear()
+        self.switch('logs')
+        self.music_cancel_button.pack(side='right')
+        self.status_var.set(tr('Проверка музыки…'))
+        self.append_log('\n' + tr('Проверка музыки · {0}').format(self.store.selected().name) + '\n')
+
+        def work():
+            try:
+                with exclusive_workspace(workspace):
+                    checked = preflight_music(ready, credentials, self.music_stop, bot.log)
+                summary = tr('Проверка музыки завершена. Проверено видео: {0}.').format(len(checked))
+            except MusicCheckCancelled:
+                summary = tr('Проверка музыки отменена.')
+            except (MusicPreflightBlocked, WorkspaceBusy, OSError) as exc:
+                summary = str(exc)
+            except Exception:
+                summary = tr('Не удалось выполнить проверку музыки.')
+            self.messages.put(('music_done', summary))
+
+        self.worker = threading.Thread(target=work, name='jetvideo-music-check', daemon=True)
+        self.worker.start()
 
     def stop_watch(self):
         if not self.watch_worker or not self.watch_worker.is_alive():
@@ -1555,6 +1655,16 @@ class ModernApp(InsightsMixin, tk.Frame):
                     if data:
                         self.append_log(f"✕ WATCH: {data}\n")
                     self._refresh_dashboard()
+                elif typ == 'watch_music_blocked':
+                    status = tr('WATCH остановлен проверкой музыки.')
+                    self.switch('logs')
+                    self.status_var.set(status)
+                    self.append_log(f'⚠ {status} {data}\n')
+                    self._refresh_dashboard()
+                elif typ == 'music_done':
+                    self.music_cancel_button.pack_forget()
+                    self.status_var.set(data)
+                    self.append_log(str(data) + '\n')
         except queue.Empty:
             pass
         self.after(140, self._flush_messages)
@@ -1711,7 +1821,7 @@ class ModernApp(InsightsMixin, tk.Frame):
         messagebox.showinfo(tr('Готово'), tr('Подписи и хэштеги сохранены.'), parent=self)
 
     def _toggle_secrets(self):
-        for key in SECRET_KEYS:
+        for key in SECRET_KEYS & self.env_entries.keys():
             self.env_entries[key].configure(show="" if self.show_secret.get() else "●")
 
     def save_connections(self):
@@ -1813,5 +1923,6 @@ class ModernApp(InsightsMixin, tk.Frame):
         if self.worker and self.worker.is_alive():
             if not messagebox.askyesno(tr('Загрузка в процессе'), tr('Загрузка ещё не завершена. Закрытие может прервать её. Закрыть?'), parent=self):
                 return False
+            self.music_stop.set()
         bot.set_log_callback(None)
         return True

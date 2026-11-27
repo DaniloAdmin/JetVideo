@@ -171,14 +171,17 @@ class Studio(tk.Tk):
         self.reopen = {'locale_code': code, 'initial_page': self._active, 'previous_outputs': outputs}
         self.destroy()
 
+    def _new_guide(self, parent):
+        filename = {'ru': 'README.ru.md', 'uk': 'README.uk.md', 'en': 'README.md'}[language()]
+        return GuideWindow(parent, bundled(filename))
+
     def show_help(self, _event=None):
         if self.guide is not None and self.guide.winfo_exists():
             self.guide.deiconify()
             self.guide.lift()
             self.guide.focus_set()
         else:
-            filename = {'ru': 'README.ru.md', 'uk': 'README.uk.md', 'en': 'README.md'}[language()]
-            self.guide = GuideWindow(self, bundled(filename))
+            self.guide = self._new_guide(self)
         return 'break'
 
     def show_connection_help(self, key):
@@ -192,6 +195,20 @@ class Studio(tk.Tk):
         self.show_help()
         self.guide.open_section(self.guide.readme, 'captions-and-tags')
 
+    def show_music_help(self, dialog):
+        previous_focus = dialog.focus_get()
+        guide = self._new_guide(dialog)
+        guide.open_section(guide.readme, 'music-check')
+
+        def restore_dialog(event):
+            if event.widget is guide and dialog.winfo_viewable():
+                dialog.grab_set()
+                if previous_focus is not None and previous_focus.winfo_exists():
+                    previous_focus.focus_set()
+
+        guide.bind('<Destroy>', restore_dialog, add='+')
+        guide.grab_set()
+
     def show(self, key: str):
         if self._active == key:
             return
@@ -201,7 +218,7 @@ class Studio(tk.Tk):
                 old.destroy()
             try:
                 self.publisher = ModernApp(host, connection_help=self.show_connection_help,
-                                           captions_help=self.show_captions_help)
+                                           captions_help=self.show_captions_help, music_help=self.show_music_help)
                 self.publisher.pack(fill='both', expand=True)
             except WorkspaceSelectionRequired:
                 self._workspace_placeholder()

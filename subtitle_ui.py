@@ -11,12 +11,27 @@ from tkinter import colorchooser, filedialog, messagebox, ttk
 from PIL import Image, ImageTk
 
 from app_info import APP_NAME
+from caption_layout import caption_lines
 from editor_ui import ACCENT_LIGHT, BG, BORDER, FG, FONT, MUTED, PANEL, PANEL2, resolve_video_tools
+from guide_ui import bind_tooltip
 from i18n import file_types, language, tr
-from subtitles import CaptionPainter, Cue, FONTS, SubtitleStyle, VAD_MODEL_NAME, cue_at, export_subtitled, frame_at, read_srt, transcribe, word_starts
+from subtitle_spelling import find_issues, suggestions
+from subtitles import (
+    CaptionPainter, Cue, FONTS, LARGE_MODEL_NAME, SMALL_MODEL_NAME, SubtitleStyle, VAD_MODEL_NAME,
+    cue_at, export_subtitled, frame_at, hold_captions, read_srt, transcribe, word_starts,
+)
 from ui_icons import icon
 from video_ad_inserter_core import VIDEO_TYPES, parse_time, probe_media
 from video_preview import VideoPreview
+
+
+BASE_MODEL_NAME = 'ggml-base.bin'
+MODELS = (
+    ('Максимальная точность', LARGE_MODEL_NAME),
+    ('Точнее', SMALL_MODEL_NAME),
+    ('Быстрее', BASE_MODEL_NAME),
+)
+LANGUAGES = {'Русский': 'ru', 'Українська': 'uk'}
 
 
 def _time_label(ms):
@@ -30,8 +45,11 @@ def _whisper_tools():
     folder = Path(sys.executable).resolve().parent if getattr(sys, 'frozen', False) else Path(__file__).resolve().parent
     folder = folder / 'tools' / 'whisper'
     binary = folder / ('whisper-cli.exe' if sys.platform == 'win32' else 'whisper-cli')
-    model = folder / 'ggml-base.bin'
-    return (binary, model) if binary.is_file() and model.is_file() else None
+    if binary.is_file():
+        for _, name in MODELS:
+            if (model := folder / name).is_file():
+                return binary, model
+    return None
 
 
 class SubtitleEditor:
@@ -45,6 +63,10 @@ class SubtitleEditor:
         self.source = self.info = self.image = self.ffmpeg = self.result = None
         self.result_step = 0
         self.cues, self.starts = [], []
+        self.show_example = True
+        self.import_hold_available = False
+        self.detected_language = None
+        self.spelling_issues = {}
         self.jobs = queue.SimpleQueue()
         self.job_cancel = None
         self.preview_request = None
@@ -61,7 +83,9 @@ class SubtitleEditor:
         self.x = tk.StringVar(self.top, '50')
         self.y = tk.StringVar(self.top, '72')
         self.keyframes = tk.StringVar(self.top, editor.cut_duration.get())
-        self.language = tk.StringVar(self.top, 'Українська' if language() == 'uk' else 'Русский')
+        self.language = tk.StringVar(self.top, tr('Автоопределение'))
+        tools = _whisper_tools()
+        self.quality = tk.StringVar(self.top, tools[1].name if tools else BASE_MODEL_NAME)
         self.speech_only = tk.BooleanVar(self.top, True)
         self.highlight = tk.BooleanVar(self.top, False)
         self.background = tk.BooleanVar(self.top, False)
@@ -69,7 +93,7 @@ class SubtitleEditor:
         self.time = tk.DoubleVar(self.top, 0)
         self.status = tk.StringVar(self.top, tr('Выбери видео и загрузи SRT или распознай речь.'))
         self.file_label = tk.StringVar(self.top, '')
-        self._build()
+        self._build(tools)
         self.top.bind('<Destroy>', self._destroyed, add='+')
         self.top.after(100, self._poll)
 
@@ -92,7 +116,7 @@ class SubtitleEditor:
         if event.widget is self.top and self.playback is not None:
             self.playback.close()
 
-    def _build(self):
+    def _build(self, whisper_tools):
         top = self.top
         editor = self.editor
         header = tk.Frame(top, bg=BG)
@@ -105,14 +129,28 @@ class SubtitleEditor:
         self.open_button.pack(side='left')
         self.import_button = editor._btn(files, tr('Загрузить SRT'), self.import_srt, glyph='captions', compact=True)
         self.import_button.pack(side='left', padx=(6, 0))
-        ttk.Combobox(speech, textvariable=self.language, values=('Русский', 'Українська'),
-                     state='readonly', width=10, style='Ad.TCombobox').pack(side='left', padx=(0, 4))
-        self.transcribe_button = editor._btn(speech, tr('Распознать речь'), self.auto_captions, compact=True)
+        self.spelling_button = editor._btn(files, tr('Орфография'), self.check_spelling, glyph='check', compact=True)
+        self.spelling_button.pack(side='left', padx=(6, 0))
+        self.transcribe_button = editor._btn(speech, tr('Распознать речь'), self.auto_captions,
+                                             'primary', glyph='captions', compact=True)
         self.transcribe_button.pack(side='left')
-        self.speech_only_button = tk.Checkbutton(speech, text=tr('Только речь'), variable=self.speech_only,
-                                                 bg=BG, fg=FG, activebackground=BG, activeforeground=FG,
-                                                 selectcolor=PANEL2)
-        self.speech_only_button.pack(side='left', padx=(8, 0))
+        self.transcription_options = editor._menu_button(speech, tr('Параметры субтитров'), (), glyph='settings')
+        self.transcription_options.pack(side='left', padx=(6, 0))
+        options = self.transcription_options.nametowidget(self.transcription_options['menu'])
+        if whisper_tools:
+            binary, _ = whisper_tools
+            for label, name in MODELS:
+                if binary.with_name(name).is_file():
+                    options.add_radiobutton(label='Whisper Base' if name == BASE_MODEL_NAME else tr(label),
+                                            variable=self.quality, value=name)
+            options.add_separator()
+        for label in (tr('Автоопределение'), *LANGUAGES):
+            options.add_radiobutton(label=label, variable=self.language, value=label)
+        options.add_separator()
+        options.add_command(label=tr('Добавить задержку к SRT'), command=self._hold_imported_cues)
+        self.hold_option = options.index('end')
+        options.add_checkbutton(label=tr('Только речь'), variable=self.speech_only)
+        self.options_menu = options
 
         def reflow_header(event):
             stacked = event.width < files.winfo_reqwidth() + speech.winfo_reqwidth() + 12
@@ -196,11 +234,29 @@ class SubtitleEditor:
         scrollbar.pack(side='right', fill='y')
         self.listing.configure(yscrollcommand=scrollbar.set)
         self.listing.bind('<<TreeviewSelect>>', self.select_cue)
-        self.timing = editor._label(phrases, '', 9, MUTED, wraplength=305, justify='left')
-        self.timing.pack(anchor='w', pady=(6, 0))
+        self.listing.bind('<Delete>', self.delete_cue)
+        self.listing.tag_configure('spelling', foreground='#F5C875')
+        phrase_actions = tk.Frame(phrases, bg=PANEL)
+        phrase_actions.pack(fill='x', pady=(6, 0))
+        self.add_button = editor._btn(phrase_actions, tr('Добавить фразу'), self.add_cue, compact=True)
+        self.add_button.pack(side='left')
+        self.delete_button = editor._btn(phrase_actions, tr('Удалить фразу'), self.delete_cue, compact=True)
+        self.delete_button.pack(side='left', padx=(5, 0))
+        self.down_button = editor._btn(phrase_actions, '↓', lambda: self.move_cue(1), compact=True)
+        self.down_button.pack(side='right', padx=(4, 0))
+        self.up_button = editor._btn(phrase_actions, '↑', lambda: self.move_cue(-1), compact=True)
+        self.up_button.pack(side='right')
+        bind_tooltip(self.up_button, tr('Переместить фразу выше'))
+        bind_tooltip(self.down_button, tr('Переместить фразу ниже'))
+        self.timing = editor._label(phrases, '', 9, MUTED, wraplength=305, justify='left', anchor='w')
+        self.timing.pack(fill='x')
         self.text = tk.Text(phrases, height=2, bg=PANEL2, fg=FG, insertbackground=FG, wrap='word',
                             font=(FONT, 10), bd=0, padx=4, pady=3)
         self.text.pack(fill='x', pady=4)
+        self.text.tag_configure('spelling', foreground='#F5C875', underline=True)
+        self.text.bind('<Button-3>', self.spelling_menu)
+        self.spelling_popup = tk.Menu(self.top, tearoff=False, bg=PANEL2, fg=FG,
+                                      activebackground=ACCENT_LIGHT, activeforeground=BG)
         edit_row = tk.Frame(phrases, bg=PANEL)
         edit_row.pack(fill='x')
         editor._btn(edit_row, tr('Сохранить правку'), self.apply_edit, glyph='check', compact=True).pack(side='left')
@@ -228,13 +284,20 @@ class SubtitleEditor:
         for variable in (self.language, self.font, self.size, self.width, self.x, self.y,
                          self.outline, self.highlight, self.background):
             variable.trace_add('write', lambda *_: self.redraw())
+        self.language.trace_add('write', self._clear_spelling)
         self._set_buttons()
 
     def _set_buttons(self):
         busy = self.job_cancel is not None
+        selected = self._selected()
         for button in (self.open_button, self.import_button, self.transcribe_button, self.export_button,
-                       self.speech_only_button):
+                       self.transcription_options, self.add_button):
             button.configure(state='disabled' if busy else 'normal')
+        self.options_menu.entryconfigure(self.hold_option, state='normal' if self.import_hold_available and not busy else 'disabled')
+        self.spelling_button.configure(state='normal' if self.cues and not busy else 'disabled')
+        self.delete_button.configure(state='normal' if selected is not None and not busy else 'disabled')
+        self.up_button.configure(state='normal' if selected is not None and selected > 0 and not busy else 'disabled')
+        self.down_button.configure(state='normal' if selected is not None and selected + 1 < len(self.cues) and not busy else 'disabled')
         self.cut_button.configure(state='normal' if self.result and not busy else 'disabled')
         self.cancel_button.configure(text=tr('Отмена') if busy else tr('Закрыть'))
         self.play_button.configure(state='normal' if self.source and not busy else 'disabled',
@@ -280,7 +343,7 @@ class SubtitleEditor:
             self.job_cancel = None
             self.editor.busy = False
             self.editor._update_badges()
-            if kind == 'open':
+            if kind in ('open', 'open-transcribe'):
                 self.source, self.ffmpeg, self.info, self.image = data
                 self.frame_size = self.image.size
                 self.result = None
@@ -289,9 +352,21 @@ class SubtitleEditor:
                 self.file_label.set(self.source.name)
                 self.status.set(tr('Выбери видео и загрузи SRT или распознай речь.'))
                 self.redraw()
+                if kind == 'open-transcribe':
+                    self.auto_captions()
             elif kind == 'cues':
                 if data:
-                    self._load_cues(data)
+                    self.detected_language = None
+                    self._load_cues(data, imported=True)
+            elif kind == 'transcribed':
+                cues, detected_language = data
+                if cues:
+                    self.detected_language = detected_language
+                    self._load_cues(cues)
+            elif kind == 'spelling':
+                self._show_spelling_results(*data)
+            elif kind == 'spelling-menu':
+                self._show_spelling_menu(*data)
             elif kind == 'export':
                 if data:
                     self.result, self.result_step = data
@@ -304,13 +379,13 @@ class SubtitleEditor:
             self._set_buttons()
         self.top.after(100, self._poll)
 
-    def select_video(self):
+    def select_video(self, *, transcribe=False):
         self.pause_playback()
         selected = filedialog.askopenfilename(parent=self.top, filetypes=file_types(VIDEO_TYPES))
         if selected:
-            self._load_video(Path(selected))
+            self._load_video(Path(selected), transcribe=transcribe)
 
-    def _load_video(self, source):
+    def _load_video(self, source, *, transcribe=False):
         tools = resolve_video_tools(self.editor.ffmpeg_path.get())
         if not tools:
             messagebox.showerror(APP_NAME, tr('Пара FFmpeg и FFprobe не найдена.'), parent=self.top)
@@ -323,7 +398,7 @@ class SubtitleEditor:
             ffmpeg, ffprobe = tools
             return source, ffmpeg, probe_media(ffprobe, str(source)), frame_at(ffmpeg, source, 0)
 
-        self._start('open', load)
+        self._start('open-transcribe' if transcribe else 'open', load)
 
     def import_srt(self):
         self.pause_playback()
@@ -334,30 +409,213 @@ class SubtitleEditor:
 
     def auto_captions(self):
         if self.source is None:
-            self.status.set(tr('Сначала выбери видео.'))
+            self.select_video(transcribe=True)
+            return
+        if not self.info.has_audio:
+            self.status.set(tr('В видео нет звуковой дорожки.'))
             return
         tools = _whisper_tools()
         if tools is None:
-            messagebox.showerror(APP_NAME, tr('Для распознавания добавь Whisper и модель ggml-base.bin в tools/whisper.'), parent=self.top)
+            messagebox.showerror(APP_NAME, tr('Не найдены Whisper и модель для распознавания в tools/whisper.'), parent=self.top)
             return
-        vad_model = tools[1].with_name(VAD_MODEL_NAME) if self.speech_only.get() else None
+        whisper, model = tools
+        model = model.with_name(self.quality.get())
+        if not model.is_file():
+            messagebox.showerror(APP_NAME, tr('Не найдена модель {0} в tools/whisper.').format(model.name), parent=self.top)
+            return
+        vad_model = model.with_name(VAD_MODEL_NAME) if self.speech_only.get() else None
         if vad_model is not None and not vad_model.is_file():
             messagebox.showerror(APP_NAME, tr('Для режима «Только речь» добавь модель {0} в tools/whisper.').format(VAD_MODEL_NAME), parent=self.top)
             return
-        language = 'uk' if self.language.get() == 'Українська' else 'ru'
-        self._start('cues', lambda cancel, notify: transcribe(self.ffmpeg, self.source, *tools, language, cancel, notify,
-                                                             vad_model=vad_model))
+        spoken_language = LANGUAGES.get(self.language.get(), 'auto')
 
-    def _load_cues(self, cues):
+        def recognize(cancel, notify):
+            detected = []
+            cues = transcribe(self.ffmpeg, self.source, whisper, model, spoken_language, cancel, notify,
+                              duration=self.info.duration, vad_model=vad_model, on_language=detected.append)
+            return cues, detected[0] if detected else None
+
+        self._start('transcribed', recognize)
+
+    def _subtitle_language(self):
+        return LANGUAGES.get(self.language.get()) or self.detected_language or ('uk' if language() == 'uk' else 'ru')
+
+    def _load_cues(self, cues, *, imported=False):
+        self._clear_spelling()
         self.cues = sorted(cues, key=lambda cue: cue.start)
+        self.show_example = not self.cues
+        self.import_hold_available = imported and bool(self.cues)
+        self.result = None
         self.starts = [cue.start for cue in self.cues]
-        self.listing.delete(*self.listing.get_children())
-        for index, cue in enumerate(self.cues):
-            self.listing.insert('', 'end', iid=str(index), values=(_time_label(cue.start), ' '.join(cue.text.split())))
-        self.listing.selection_set('0')
-        self.listing.focus('0')
+        self._refresh_listing(0)
         self.status.set(tr('Загружено фраз: {0}').format(len(self.cues)))
+
+    def _refresh_listing(self, index):
+        self.listing.delete(*self.listing.get_children())
+        for row_index, cue in enumerate(self.cues):
+            tags = ('spelling',) if row_index in self.spelling_issues else ()
+            self.listing.insert('', 'end', iid=str(row_index), tags=tags,
+                                values=(_time_label(cue.start), ' '.join(cue.text.split())))
+        if self.cues:
+            self._select_row(min(index, len(self.cues) - 1))
+        else:
+            self.select_cue()
+
+    def _select_row(self, index):
+        row = str(index)
+        self.listing.selection_set(row)
+        self.listing.focus(row)
+        self.listing.see(row)
         self.select_cue()
+
+    def add_cue(self):
+        if self.job_cancel is not None:
+            return
+        self.pause_playback()
+        duration = round(self.info.duration * 1000) if self.info is not None else None
+        start = round(self.time.get() * 1000)
+        end = start + 2000
+        if duration is not None:
+            if start >= duration:
+                start = max(0, duration - 2000)
+            end = min(start + 2000, duration)
+
+        top = tk.Toplevel(self.top, name='new_phrase', bg=BG, padx=14, pady=14)
+        top.withdraw()
+        top.transient(self.top)
+        top.title(tr('Добавить фразу'))
+        editor = self.editor
+        times = tk.Frame(top, bg=BG)
+        times.pack(fill='x')
+        inputs = []
+        for column, (name, label, value) in enumerate((
+            ('start', tr('Начало фразы'), start),
+            ('end', tr('Конец фразы'), end),
+        )):
+            times.columnconfigure(column, weight=1)
+            padding = (0, 8) if column == 0 else (8, 0)
+            editor._label(times, label, 10, bg=BG).grid(row=0, column=column, sticky='w', padx=padding)
+            entry = ttk.Entry(times, name=name, style='Ad.TEntry', width=16)
+            entry.grid(row=1, column=column, sticky='ew', padx=padding)
+            entry.insert(0, _time_label(value))
+            inputs.append(entry)
+        editor._label(top, tr('Время в секундах, ММ:СС или ЧЧ:ММ:СС.'), 9, MUTED, bg=BG,
+                      wraplength=380, justify='left').pack(anchor='w', pady=(5, 10))
+        editor._label(top, tr('Фраза'), 10, bg=BG).pack(anchor='w')
+        phrase = tk.Text(top, name='phrase', height=3, width=36, bg=PANEL2, fg=FG, insertbackground=FG,
+                         wrap='word', font=(FONT, 10), bd=0, padx=6, pady=5)
+        phrase.pack(fill='both', expand=True)
+        feedback = tk.StringVar(top)
+        editor._label(top, '', 9, FG, bg=BG, textvariable=feedback, wraplength=380, justify='left').pack(
+            anchor='w', pady=(5, 3))
+        actions = tk.Frame(top, bg=BG)
+        actions.pack(fill='x')
+
+        def close():
+            top.destroy()
+            self.top.grab_set()
+            self.listing.focus_set()
+
+        def save():
+            text = phrase.get('1.0', 'end-1c').strip()
+            if not text:
+                feedback.set(tr('Введи текст фразы.'))
+                phrase.focus_set()
+                return
+            try:
+                start_ms, end_ms = (round(parse_time(entry.get()) * 1000) for entry in inputs)
+            except (ValueError, OverflowError):
+                feedback.set(tr('Неверный формат времени. Используй секунды, ММ:СС или ЧЧ:ММ:СС.'))
+                return
+            if end_ms <= start_ms:
+                feedback.set(tr('Конец фразы должен быть позже начала.'))
+                return
+            if duration is not None and end_ms > duration:
+                feedback.set(tr('Время фразы выходит за длительность видео.'))
+                return
+            close()
+            self._insert_cue(Cue(start_ms, end_ms, text))
+
+        editor._btn(actions, tr('Сохранить'), save, 'primary', compact=True).pack(side='left')
+        editor._btn(actions, tr('Отмена'), close, compact=True).pack(side='left', padx=(6, 0))
+        top.protocol('WM_DELETE_WINDOW', close)
+        top.bind('<Escape>', lambda _event: close())
+        top.update_idletasks()
+        width = max(410, top.winfo_reqwidth())
+        height = top.winfo_reqheight() + 20
+        x = self.top.winfo_rootx() + (self.top.winfo_width() - width) // 2
+        y = self.top.winfo_rooty() + (self.top.winfo_height() - height) // 2
+        top.minsize(width, height)
+        top.geometry(f'{width}x{height}+{x}+{y}')
+        top.deiconify()
+        top.grab_set()
+        phrase.focus_set()
+
+    def _insert_cue(self, cue):
+        index = bisect_right(self.starts, cue.start)
+        self.cues.insert(index, cue)
+        self.starts.insert(index, cue.start)
+        self.show_example = False
+        self.result = None
+        self.spelling_issues = {
+            i if i < index else i + 1: issues for i, issues in self.spelling_issues.items()
+        }
+        self._refresh_listing(index)
+        self.status.set(tr('Фраза добавлена.'))
+
+    def move_cue(self, offset):
+        index = self._selected()
+        if index is None or self.job_cancel is not None:
+            return
+        target = index + offset
+        if not 0 <= target < len(self.cues):
+            return
+        self.pause_playback()
+        selected, neighbor = self.cues[index], self.cues[target]
+        selected_issues = self.spelling_issues.get(index, ())
+        neighbor_issues = self.spelling_issues.get(target, ())
+        for row, phrase, slot, issues in ((index, neighbor, selected, neighbor_issues),
+                                          (target, selected, neighbor, selected_issues)):
+            duration = slot.end - slot.start
+            word_times = tuple(
+                slot.start + min(duration - 1, max(0, (time - phrase.start) * duration // (phrase.end - phrase.start)))
+                for time in phrase.word_starts
+            )
+            self.cues[row] = replace(phrase, start=slot.start, end=slot.end, word_starts=word_times)
+            self.listing.set(str(row), 'text', ' '.join(phrase.text.split()))
+            self._set_spelling(row, issues)
+        self.result = None
+        self._select_row(target)
+        self.listing.focus_set()
+        self.status.set(tr('Фраза перемещена.'))
+
+    def delete_cue(self, _event=None):
+        index = self._selected()
+        if index is None or self.job_cancel is not None:
+            return 'break'
+        self.pause_playback()
+        del self.cues[index]
+        del self.starts[index]
+        self.spelling_issues = {
+            i if i < index else i - 1: issues for i, issues in self.spelling_issues.items() if i != index
+        }
+        self.result = None
+        self.import_hold_available = self.import_hold_available and bool(self.cues)
+        self._refresh_listing(index)
+        self.listing.focus_set()
+        self.status.set(tr('Фраза удалена.'))
+        return 'break'
+
+    def _hold_imported_cues(self):
+        if not self.import_hold_available or self.job_cancel is not None:
+            return
+        duration = round(self.info.duration * 1000) if self.info is not None else None
+        self.cues = hold_captions(self.cues, duration)
+        self.import_hold_available = False
+        self.result = None
+        self.status.set(tr('Задержка добавлена к импортированным субтитрам.'))
+        self.redraw()
+        self._set_buttons()
 
     def _selected(self):
         selection = self.listing.selection()
@@ -365,12 +623,15 @@ class SubtitleEditor:
 
     def select_cue(self, _event=None):
         index = self._selected()
+        self._set_buttons()
+        self.text.delete('1.0', 'end')
         if index is None:
+            self.redraw()
             return
         self.pause_playback()
         cue = self.cues[index]
-        self.text.delete('1.0', 'end')
         self.text.insert('1.0', cue.text)
+        self._mark_spelling(index)
         self.time.set(cue.start / 1000)
         self.request_frame()
 
@@ -386,7 +647,117 @@ class SubtitleEditor:
         starts = cue.word_starts if len(cue.text.split()) == len(text.split()) else ()
         self.cues[index] = replace(cue, text=text, word_starts=starts)
         self.listing.set(str(index), 'text', ' '.join(text.split()))
+        self._set_spelling(index, ())
+        self._mark_spelling(index)
         self.redraw()
+
+    def _clear_spelling(self, *_args):
+        for index in self.spelling_issues:
+            self.listing.item(str(index), tags=())
+        self.spelling_issues.clear()
+        self.text.tag_remove('spelling', '1.0', 'end')
+
+    def _set_spelling(self, index, issues):
+        if issues:
+            self.spelling_issues[index] = issues
+        else:
+            self.spelling_issues.pop(index, None)
+        self.listing.item(str(index), tags=('spelling',) if issues else ())
+
+    def _mark_spelling(self, index):
+        self.text.tag_remove('spelling', '1.0', 'end')
+        text = self.text.get('1.0', 'end-1c')
+        if index is None or text != self.cues[index].text:
+            return
+        for issue in self.spelling_issues.get(index, ()):
+            locations = []
+            for offset in (issue.start, issue.end):
+                before = text[:offset]
+                line = before.count('\n') + 1
+                column = self.text.tk.call('string', 'length', before.rsplit('\n', 1)[-1])
+                locations.append(f'{line}.{column}')
+            self.text.tag_add('spelling', *locations)
+
+    def check_spelling(self):
+        if not self.cues:
+            return
+        language = self._subtitle_language()
+        texts = tuple(cue.text for cue in self.cues)
+
+        def check(cancel, notify):
+            notify(tr('Проверка орфографии…'))
+            report = {}
+            for index, text in enumerate(texts):
+                if cancel.is_set():
+                    break
+                issues = find_issues(text, language)
+                if issues:
+                    report[index] = issues
+            return language, texts, report
+
+        self._start('spelling', check)
+
+    def _show_spelling_results(self, language, texts, report):
+        if language != self._subtitle_language():
+            return
+        self._clear_spelling()
+        for index, issues in report.items():
+            if index < len(self.cues) and self.cues[index].text == texts[index]:
+                self._set_spelling(index, issues)
+        count = sum(map(len, self.spelling_issues.values()))
+        if count:
+            index = self._selected()
+            if index not in self.spelling_issues:
+                index = next(iter(self.spelling_issues))
+                self.listing.selection_set(str(index))
+                self.listing.see(str(index))
+                self.select_cue()
+            self._mark_spelling(index)
+        self.status.set(tr('Подсвечено слов: {0}. Варианты — правой кнопкой.').format(count)
+                        if count else tr('Словарь не нашёл ошибок.'))
+
+    def spelling_menu(self, event):
+        index = self._selected()
+        if index is None or index not in self.spelling_issues or self.job_cancel is not None:
+            return
+        text = self.text.get('1.0', 'end-1c')
+        if text != self.cues[index].text:
+            return
+        offset = len(self.text.get('1.0', f'@{event.x},{event.y}'))
+        issue = next((item for item in self.spelling_issues[index] if item.start <= offset < item.end), None)
+        if issue is None:
+            return
+        language = self._subtitle_language()
+        point = (event.x_root, event.y_root)
+        self._start('spelling-menu', lambda _cancel, _notify: (
+            index, text, issue, language, point, suggestions(issue, language),
+        ))
+        return 'break'
+
+    def _show_spelling_menu(self, index, text, issue, language, point, options):
+        if (self._selected() != index or text != self.text.get('1.0', 'end-1c')
+                or language != self._subtitle_language()):
+            return
+        menu = self.spelling_popup
+        menu.delete(0, 'end')
+        for option in options:
+            menu.add_command(label=option, command=lambda value=option: self._replace_word(index, text, issue, value))
+        if not options:
+            menu.add_command(label=tr('Нет вариантов'), state='disabled')
+        try:
+            menu.tk_popup(*point)
+        finally:
+            menu.grab_release()
+
+    def _replace_word(self, index, original, issue, word):
+        if self._selected() != index or self.cues[index].text != original:
+            return
+        updated = original[:issue.start] + word + original[issue.end:]
+        self.text.delete('1.0', 'end')
+        self.text.insert('1.0', updated)
+        self.apply_edit()
+        self._set_spelling(index, find_issues(updated, self._subtitle_language()))
+        self._mark_spelling(index)
 
     def save_srt(self):
         self.pause_playback()
@@ -397,7 +768,7 @@ class SubtitleEditor:
                                             filetypes=((tr('Субтитры'), '*.srt'),))
         if path:
             try:
-                document = '\n\n'.join(f'{index}\n{_time_label(cue.start)} --> {_time_label(cue.end)}\n{cue.text}'
+                document = '\n\n'.join(f'{index}\n{_time_label(cue.start)} --> {_time_label(cue.end)}\n{caption_lines(cue.text)}'
                                         for index, cue in enumerate(self.cues, start=1))
                 Path(path).write_text(document + '\n', encoding='utf-8-sig')
                 self.status.set(tr('Готово: ') + Path(path).name)
@@ -507,7 +878,7 @@ class SubtitleEditor:
         self.canvas.coords(self.frame_item, x, y)
         time_ms = round(self.time.get() * 1000)
         index = cue_at(self.cues, self.starts, time_ms)
-        if index is None and self.cues:
+        if index is None and not self.show_example:
             self.timing.configure(text='')
             self.canvas.itemconfigure(self.caption_item, state='hidden')
             return

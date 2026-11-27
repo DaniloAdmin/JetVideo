@@ -12,3 +12,4 @@ idna==3.20
 urllib3==2.8.0
 tzdata==2026.6
 pillow==13.0.0
+spylls==0.1.7

@@ -94,6 +94,78 @@ def test_explicit_rejection_is_distinct_from_uncertain(publishing):
     assert next(iter(ui.read_json(root/'state.json', {})['items'].values()))['status'] == 'rejected'
     assert deleted and not posts
 
+def enable_music_gate(root):
+    with (root / '.env').open('a', encoding='utf-8') as stream:
+        stream.write('ACR_CHECK_WATCH="1"\nACRCLOUD_TOKEN="test-only"\n')
+
+
+def test_watch_stops_before_publishing_when_music_matches(publishing, monkeypatch):
+    import portfolio
+    root, _, posts, uploads, _ = publishing
+    enable_music_gate(root)
+    stop = threading.Event()
+    original = root / 'ready' / 'Моё видео.mp4'
+    other = root / 'ready' / '2.mp4'
+    other.write_bytes(b'other-video')
+    profile = ProfileStore(root).selected()
+
+    def blocked(ready, credentials, stop_event, log):
+        assert credentials['ACRCLOUD_TOKEN'] == 'test-only'
+        assert stop_event is stop
+        assert set(ready.iterdir()) == {original, other}
+        raise bot.MusicPreflightBlocked(f'{other.name} · 00:34–00:51')
+
+    monkeypatch.setattr(bot, 'preflight_music', blocked)
+    with pytest.raises(bot.MusicPreflightBlocked, match='00:34–00:51'):
+        portfolio.watch_profiles(root, [profile.id], stop)
+    assert stop.is_set()
+    assert not posts and not uploads
+    assert set((root / 'ready').iterdir()) == {original, other}
+    assert not ui.read_json(root / 'state.json', {})['items']
+
+
+@pytest.mark.parametrize('change', ['none', 'changed', 'new'])
+def test_music_gate_only_publishes_approved_content(publishing, monkeypatch, change):
+    root, _, posts, uploads, _ = publishing
+    enable_music_gate(root)
+    original = root / 'ready' / 'Моё видео.mp4'
+
+    def check(ready, credentials, stop_event, log):
+        approved = {original: fingerprint(original)}
+        if change == 'changed':
+            original.write_bytes(b'changed-after-music-check')
+        elif change == 'new':
+            (ready / '2.mp4').write_bytes(b'added-after-music-check')
+        return approved
+
+    monkeypatch.setattr(bot, 'preflight_music', check)
+    if change == 'none':
+        bot.Bot(root).fill()
+        assert uploads == [original.name] and len(posts) == 1
+        assert (root / 'scheduled' / original.name).is_file()
+    else:
+        name = original.name if change == 'changed' else '2.mp4'
+        with pytest.raises(bot.MusicPreflightBlocked) as blocked:
+            bot.Bot(root).fill()
+        assert name in str(blocked.value)
+        assert original.is_file() and not uploads and not posts
+
+
+def test_cancel_during_music_gate_leaves_ready_unpublished(publishing, monkeypatch):
+    root, _, posts, uploads, _ = publishing
+    enable_music_gate(root)
+    stop = threading.Event()
+
+    def cancelled(ready, credentials, stop_event, log):
+        stop_event.set()
+        video = next(ready.iterdir())
+        return {video: fingerprint(video)}
+
+    monkeypatch.setattr(bot, 'preflight_music', cancelled)
+    with pytest.raises(bot.MusicCheckCancelled):
+        bot.Bot(root, stop_event=stop).fill()
+    assert stop.is_set() and not uploads and not posts
+
 def test_bad_timezone_blocks_instead_of_using_system_timezone(publishing):
     root, *_ = publishing
     instance = bot.Bot(root)

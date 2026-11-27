@@ -6,6 +6,8 @@ from pathlib import Path
 from threading import Event
 
 import bot
+from music_check import MusicCheckCancelled
+from music_preflight import MusicPreflightBlocked
 from profiles import ProfileStore
 from process_lock import exclusive_workspace
 
@@ -118,7 +120,8 @@ def watch_profiles(workspace: Path, ids: list[str], stop_event: Event) -> None:
                 bot.set_log_context(profile.name)
                 interval = 60
                 try:
-                    instance = bot.Bot(profile.root, credentials_path=store.workspace / '.env', profile_id=profile.id)
+                    instance = bot.Bot(profile.root, credentials_path=store.workspace / '.env', profile_id=profile.id,
+                                       stop_event=stop_event)
                     interval = max(1, int(instance.config.get('watch_interval_minutes', 60)))
                     if len(chosen) > 1:
                         instance.resolve()
@@ -127,6 +130,13 @@ def watch_profiles(workspace: Path, ids: list[str], stop_event: Event) -> None:
                             raise PortfolioError(tr('Buffer-канал уже используется другим профилем. Отправка заблокирована.'))
                         live_channels[profile.id] = channel
                     instance.fill()
+                except MusicPreflightBlocked:
+                    stop_event.set()
+                    bot.log(tr('WATCH для аккаунтов остановлен.'))
+                    raise
+                except MusicCheckCancelled:
+                    stop_event.set()
+                    break
                 except Exception as exc:
                     bot.log(tr('✕ Ошибка WATCH: {0}: {1}').format(type(exc).__name__, exc))
                 finally:

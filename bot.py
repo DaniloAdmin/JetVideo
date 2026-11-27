@@ -12,6 +12,8 @@ import time
 import uuid
 import threading
 from media_files import video_id, fingerprint, stable_file, validate_folders
+from music_check import MusicCheckCancelled
+from music_preflight import MusicPreflightBlocked, preflight_music
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from pathlib import Path
@@ -363,10 +365,19 @@ class R2Client:
 
 
 class Bot:
-    def __init__(self, root: Path, *, credentials_path: Path | None = None, profile_id: str = "default"):
+    def __init__(self, root: Path, *, credentials_path: Path | None = None, profile_id: str = "default",
+                 stop_event: Event | None = None):
         self.root = Path(root)
         self.profile_id = profile_id
         credentials = dotenv_values(credentials_path or self.root / ".env", interpolate=False)
+        self.stop_event = stop_event
+        self.check_music = (credentials.get('ACR_CHECK_WATCH') or '').strip() == '1'
+        self.music_credentials = {
+            key: credentials.get(key) for key in ('ACRCLOUD_TOKEN', 'ACRCLOUD_REGION', 'ACRCLOUD_CONTAINER_ID')
+        }
+        token = (self.music_credentials['ACRCLOUD_TOKEN'] or '').strip()
+        if token:
+            _secrets.add(token)
         self.config = load_json(root / "config.json", {})
         if not self.config:
             raise BotError(tr('Нет config.json'))
@@ -714,7 +725,13 @@ class Bot:
             cursor = due
         log("--------------------------")
 
-    def fill(self):
+    def fill(self, *, stop_event: Event | None = None):
+        checked = None
+        if self.check_music:
+            stop_event = stop_event or self.stop_event or Event()
+            checked = preflight_music(self.ready, self.music_credentials, stop_event, log)
+            if stop_event.is_set():
+                raise MusicCheckCancelled()
         self.resolve()
         binding = self.state.get('channel_id')
         if binding and binding != self.channel['id']:
@@ -733,6 +750,12 @@ class Bot:
             return
         candidates = [(n,p) for n,p in list_videos(self.ready)
                       if n not in occupied or self.state['items'].get(str(n), {}).get('status') == 'uploaded']
+        if checked is not None:
+            for _, video in candidates:
+                if video not in checked:
+                    raise MusicPreflightBlocked(
+                        tr('Файл появился после проверки музыки: {0}. Запусти проверку снова.').format(video.name)
+                    )
         if not candidates:
             blocked = [(n, self.state.get("items", {}).get(str(n), {}).get("status"))
                        for n, _ in list_videos(self.ready) if n in occupied]
@@ -759,6 +782,10 @@ class Bot:
             try:
                 with stable_file(video, float(self.config.get('file_stable_seconds', 15))):
                     digest = fingerprint(video)
+                    if checked is not None and digest != checked[video]:
+                        raise MusicPreflightBlocked(
+                            tr('Файл изменился после проверки музыки: {0}. Запусти проверку снова.').format(video.name)
+                        )
                     duplicate = any(k != str(part) and v.get('sha256') == digest
                                     and v.get('status') not in ('returned', 'rejected')
                                     for k, v in self.state['items'].items())
@@ -770,6 +797,8 @@ class Bot:
                         raise BotError(tr('Загруженный файл изменился. Сохрани исходный файл и проверь историю.'))
                     due = self.next_due(cursor, used_slots)
                     text = previous.get('caption') if previous.get('status') == 'uploaded' else caption_for(self.config, part, video.name)
+                    if checked is not None and stop_event.is_set():
+                        raise MusicCheckCancelled()
                     if previous.get('status') == 'uploaded':
                         url, r2_key = previous['r2_url'], previous['r2_key']
                     else:
@@ -823,19 +852,23 @@ class Bot:
 
     def watch(self, stop_event: Event | None = None):
         mins = max(1, int(self.config.get("watch_interval_minutes", 60)))
+        stop_event = stop_event or self.stop_event or Event()
         log(tr('WATCH: пополняю очередь каждые {0} мин.').format(mins))
-        while stop_event is None or not stop_event.is_set():
-            try:
-                self.fill()
-            except KeyboardInterrupt:
-                return
-            except Exception as exc:
-                log(tr('ОШИБКА: {0}: {1}').format(type(exc).__name__, exc))
-            if stop_event is None:
-                time.sleep(mins * 60)
-            elif stop_event.wait(mins * 60):
-                break
-        log(tr('WATCH: остановлен.'))
+        try:
+            while not stop_event.is_set():
+                try:
+                    self.fill(stop_event=stop_event)
+                except MusicPreflightBlocked:
+                    stop_event.set()
+                    raise
+                except (KeyboardInterrupt, MusicCheckCancelled):
+                    break
+                except Exception as exc:
+                    log(tr('ОШИБКА: {0}: {1}').format(type(exc).__name__, exc))
+                if stop_event.wait(mins * 60):
+                    break
+        finally:
+            log(tr('WATCH: остановлен.'))
 
 def main():
     ap = argparse.ArgumentParser()
@@ -850,7 +883,7 @@ def main():
         elif args.plan: bot.plan()
         elif args.watch: bot.watch()
         else: bot.fill()
-    except BotError as exc:
+    except (BotError, MusicPreflightBlocked) as exc:
         print(tr('\nОШИБКА: {0}').format(exc))
         sys.exit(1)
     except KeyboardInterrupt:

@@ -6,7 +6,7 @@ from time import monotonic, sleep
 
 import pytest
 
-from subtitles import CaptionPainter, Cue, FONTS, SubtitleStyle, _speech_cues, export_subtitled, frame_at, read_srt
+from subtitles import CaptionPainter, Cue, FONTS, SubtitleStyle, _speech_cues, export_subtitled, frame_at, read_srt, regroup_captions
 from video_ad_inserter_core import probe_media
 from video_preview import VideoPreview
 
@@ -28,6 +28,31 @@ def test_speech_only_preserves_short_words_and_spoken_phrases():
     cues = [Cue(0, 600, 'Да.'), Cue(600, 1000, 'Ні.'), Cue(1000, 2000, 'Її ґаджет знімає відео.', (1000, 1250, 1440, 1600)),
             Cue(2000, 3000, 'Ах, это (очень) хорошо.'), Cue(3000, 4000, '[Сміх] Слухай.', (3000, 3400))]
     assert _speech_cues(cues) == [*cues[:4], Cue(3000, 4000, 'Слухай.')]
+
+
+def test_automatic_cues_follow_sentences_across_whisper_segments():
+    source = [
+        Cue(300, 2000, 'Он снова что-то сделал и опять', (300, 580, 850, 1150, 1450, 1750)),
+        Cue(2000, 3500, 'завис. Петя открыл рюкзак, а', (2000, 2280, 2630, 2900, 3200)),
+        Cue(3500, 4000, 'он пуст.', (3500, 3750)),
+        Cue(4800, 5500, 'Петя закрыл рюкзак.'),
+    ]
+    regrouped = regroup_captions(source)
+    assert [cue.text for cue in regrouped] == [
+        'Он снова что-то сделал и опять завис.',
+        'Петя открыл рюкзак, а он пуст.',
+        'Петя закрыл рюкзак.',
+    ]
+    assert [(cue.start, cue.end) for cue in regrouped] == [(300, 2280), (2280, 4000), (4800, 5500)]
+    assert regrouped[1].word_starts == (2280, 2630, 2900, 3200, 3500, 3750)
+
+
+def test_automatic_cues_keep_short_link_word_with_the_next_group():
+    text = 'Він взяв свій старий рюкзак і згадав, що залишив ключі'
+    starts = tuple(range(0, 10_000, 1000))
+    regrouped = regroup_captions([Cue(0, 10_000, text, starts)])
+    assert regrouped[0].text == 'Він взяв свій старий рюкзак'
+    assert regrouped[1].text == 'і згадав, що залишив ключі'
 
 
 @pytest.mark.parametrize('family', tuple(FONTS))

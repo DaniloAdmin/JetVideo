@@ -7,12 +7,11 @@ import queue
 import re
 import shutil
 import subprocess
-import sys
 import threading
 from pathlib import Path
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
-from app_info import APP_NAME, PRODUCT_NAME, portable_home
+from app_info import APP_NAME, PRODUCT_NAME, portable_home, resolve_video_tools
 from guide_ui import bind_tooltip
 from i18n import file_types, localized_combobox, tr
 from ui_icons import icon
@@ -62,29 +61,6 @@ def save_preferences(path: Path, data: dict) -> None:
     staging = path.with_suffix('.tmp')
     staging.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding='utf-8')
     staging.replace(path)
-
-
-def resolve_video_tools(preferred: str = '') -> tuple[str, str] | None:
-    root = Path(getattr(sys, '_MEIPASS', Path(__file__).resolve().parent)).resolve()
-    application = Path(sys.executable).resolve().parent if getattr(sys, 'frozen', False) else root
-    suffix = '.exe' if os.name == 'nt' else ''
-    name = 'ffmpeg' + suffix
-
-    def paired(candidate):
-        if not candidate.is_file():
-            return None
-        probe = candidate.with_name('ffprobe' + suffix)
-        if probe.is_file():
-            return str(candidate.resolve()), str(probe.resolve())
-        return None
-
-    if preferred.strip():
-        return paired(Path(preferred.strip().strip('"')).expanduser())
-    for directory in (application / 'tools', application, root / 'tools', root):
-        if tools := paired(directory / name):
-            return tools
-    executable = shutil.which(name)
-    return paired(Path(executable)) if executable else None
 
 
 CUT_BANNER_MODES = {

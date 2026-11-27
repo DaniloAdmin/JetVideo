@@ -4,14 +4,14 @@
 
 **JetVideo splits long videos into numbered clips, adds timed banners, and generates Russian or Ukrainian subtitles offline.** Send finished clips to a TikTok publishing queue through Buffer and Cloudflare R2.
 
-**[Download JetVideo 1.1.0 for Windows x64](https://github.com/DaniloAdmin/JetVideo/releases/download/v1.1.0/JetVideo-1.1.0-Windows-x64.zip)** · [Release notes, checksums and source archives](https://github.com/DaniloAdmin/JetVideo/releases/tag/v1.1.0)
+**[Download JetVideo 1.1.1 for Windows x64](https://github.com/DaniloAdmin/JetVideo/releases/download/v1.1.1/JetVideo-1.1.1-Windows-x64.zip)** · [Release notes, checksums and source archives](https://github.com/DaniloAdmin/JetVideo/releases/tag/v1.1.1)
 
-Extract the entire ZIP and run `JetVideo.exe` on 64-bit Windows 10 or 11. FFmpeg, FFprobe, Whisper and both subtitle models are included. The editor and its illustrated help are available in English, Ukrainian and Russian.
+Extract the entire ZIP and run `JetVideo.exe` on 64-bit Windows 10 or 11. This lightweight package includes FFmpeg, FFprobe, Whisper Base and the Silero speech filter. The editor and its illustrated help are available in English, Ukrainian and Russian.
 
-## What's new in 1.1.0
+## What's new in 1.1.1
 
-- **Redesigned dark interface.** Icon-led tabs, short transitions, separate subtitle editing and styling tabs, and more room for posting history in smaller windows.
-- **Offline subtitles.** Transcribe Russian or Ukrainian speech or load an SRT. Play the video with sound, correct phrases, adjust position and style, then save an SRT or export an MP4 with the subtitles in the picture.
+- **Optional music check.** Scan the ready folder through ACRCloud from **More actions**, with an in-app setup guide and optional checks before posting.
+- **Subtitle editing.** Check Russian or Ukrainian spelling, add, delete or reorder phrases, and extend the time captions stay visible.
 - **Fast splitting.** With banners off, keyframe mode copies the video and audio without re-encoding. Clip durations can vary with keyframe spacing.
 
 Editing works without an account. TikTok scheduling requires your own Buffer account with a connected TikTok channel and a Cloudflare R2 bucket.
@@ -47,12 +47,21 @@ For a quick export, choose **No banners** and enable **Fast, at keyframes (appro
 
 ## Add subtitles to a whole video
 
-1. Open **Video Editor → Subtitles** and choose a video. Click **Load SRT** or choose Russian or Ukrainian and click **Transcribe speech**. Transcription uses the bundled Whisper model on your computer.
-2. Click **Play** to check the subtitles against the sound. Use the timeline or select an item under **Phrases** to jump to that moment. To correct the text, click **Apply edit** after making the change.
-3. Drag the subtitles to position them. In **Appearance**, adjust the font, outline, background or active-word highlighting. Word highlighting is approximate with an SRT or when **Speech only** is enabled.
-4. Use **Save SRT** under **Phrases** for a separate subtitle file or **Export MP4** to burn the subtitles into the picture. Use **Send to splitter** to open the exported video for the next cut.
+1. Open **Video Editor → Subtitles** and click **Transcribe speech**. If there is no video selected, choose one when prompted and transcription will start. Finished subtitles appear in the phrase list. Click **Load SRT** to open existing subtitles.
+2. Click **Play** to check the subtitles against the sound. Use the timeline or select an item under **Phrases** to jump to that moment. To correct the text, click **Apply edit** after making the change. To remove a phrase, select it in the list and press **Delete** or click **Delete phrase**.
+3. To write a subtitle manually, click **Add phrase** under **Phrases**. The start defaults to the current playback position. Set the start and end using seconds (e.g. `12.5`) or a timecode (e.g. `01:12.5`), enter the text, and click **Save**. To move a selected phrase one row up or down, click **↑** or **↓**. Both phrases take the time range of their new row, and the selection follows the phrase you moved.
+4. Drag the subtitles to position them. In **Appearance**, adjust the font, outline, background or active-word highlighting. Word highlighting is approximate with an SRT or when **Speech only** is enabled.
+5. Use **Save SRT** under **Phrases** for a separate subtitle file or **Export MP4** to burn the subtitles into the picture. Use **Send to splitter** to open the exported video for the next cut.
 
 **Speech only** is on by default. It skips audio without detected speech and removes standalone fillers such as “ах” and “ух” from automatic subtitles. Singing may still be detected as speech, and very quiet speech may be missed. Clear the checkbox to transcribe the full audio track. The bundled speech filter uses Silero. [Silero model for whisper.cpp](https://huggingface.co/ggml-org/whisper-vad/blob/main/ggml-silero-v5.1.2.bin)
+
+This lightweight build uses Whisper Base and detects the language automatically. To set it yourself, choose Russian or Ukrainian in the settings menu. Long videos are processed in sections, and subtitle timecodes refer to the original video. Progress appears at the bottom of the window.
+
+Click **Check spelling** to mark words in the selected or detected language. Right-click a marked word for suggested replacements. This works on automatic subtitles and imported SRT files. Replacing a word keeps the phrase's timecodes.
+
+Automatic subtitles follow sentence boundaries and nearby pauses. The preview and export balance line widths and keep short linking words with the phrase that follows. Use Enter in the phrase editor to place a line break.
+
+Automatic captions stay visible for up to 0.8 seconds after a line ends. If the next line starts earlier, it takes over at its start time. For existing subtitles, load the SRT and choose **Extend SRT display time** from the settings menu.
 
 ## Add banners to whole videos
 
@@ -104,6 +113,30 @@ Stop WATCH and use **Posting history → More actions → Check Buffer** to comp
 Keep `state.json` and its backups. The history protects against duplicate submissions using saved part/post IDs and SHA-256 hashes for videos handled by this version. If the history is damaged, stop WATCH and restore a known-good backup.
 
 <a name="captions-and-tags"></a>
+<a name="music-check"></a>
+## Check music before submitting
+
+### Create an ACRCloud access token
+
+1. Sign up for ACRCloud and confirm your email address. File Scanning has a 14-day trial. Sign in to see current rates. [Sign up](https://console.acrcloud.com/signup) · [File Scanning pricing](https://console.acrcloud.com/filescanning#/pricing)
+2. In the console, open **Developer Setting → Personal Access Token → Create Token**. Enter a name of your choice in **Name**. Under **Scopes**, select only **read-filescanning** and **write-filescanning** in the **filescanning** group. These permissions let JetVideo upload the audio, read the result and remove the temporary file. Click **Create** and copy the token. [ACRCloud developer settings](https://console.acrcloud.com/account#/developer)
+
+### Create a File Scanning container
+
+1. In the console's top menu, open **Products → File Scanning → Containers** and click **Create**. Enter a name of your choice in **Name**. [File Scanning containers](https://console.acrcloud.com/filescanning#/fs-containers)
+2. Under **Audio Engine**, select **Audio Fingerprinting**. Set **Audio Source** to **Line-in Audio** and **Buckets** to **ACRCloud Music**.
+3. Under **Scanning Policy**, select **Traverse Scanning** to check the entire clip. Set **Rec Length** to `10` and **Interval** to `0`. You can leave **Result Callback URL** blank. Click **Confirm**. [ACRCloud container settings](https://docs.acrcloud.com/reference/console-api/file-scanning)
+4. Open the new container and note its numeric **Container ID** and region. Use `eu-west-1` for **Europe**.
+
+### Check a video in JetVideo
+
+1. Open **Publishing → Dashboard → More actions → Check music**. Paste the token into **ACRCloud API Token**, enter the number in **File Scanning Container ID** and select the **Container region**. The settings are saved to your local `.env` file when you start a check or click **Save**.
+2. Place a test video in the selected profile's `ready` folder and click **Check ready**. The manual check processes every MP4, MOV and WebM file in that folder without submitting posts. JetVideo sends only the audio track to ACRCloud.
+3. Open the **Activity log** to see each file's result. If the service recognizes music, the log shows the track and timestamps when available. **No matches found** means the check found no track in the catalog. **Check incomplete** means JetVideo couldn't get a result.
+4. To check automatically, enable **Check before WATCH and submission** and save the settings. If a track is found or a check can't be completed, WATCH stops before uploading the batch to R2 or submitting it to Buffer. Review the log, address the flagged files or the reported error, then start WATCH again.
+
+TikTok evaluates uploads separately. Check your rights to use the audio and video independently of the scan.
+
 ## Captions and tags
 
 Open **Publishing → Captions and tags** for the profile you want. Write the post caption on the left and the hashtag sets on the right.
@@ -173,4 +206,4 @@ To update, stop WATCH, close JetVideo and back up your workspace and editor pref
 
 The release uses CPython 3.14.10 x64 with Tkinter. `requirements-build.lock` contains the build dependencies. Run `python -m pytest -q` for tests or `build_windows.bat` to build the EXE and run its smoke test.
 
-JetVideo 1.1.0 corresponds to the `v1.1.0` tag. Copyright © 2026 axegaoo. The JetVideo code is licensed under the GNU GPL, version 3 only (`GPL-3.0-only`). Keep the applicable notices when redistributing copies and make corresponding source available as required when distributing binaries. [License](LICENSE) · [Copyright](COPYRIGHT.md) · [Third-party notices](THIRD_PARTY_NOTICES.md)
+JetVideo 1.1.1 corresponds to the `v1.1.1` tag. Copyright © 2026 axegaoo. The JetVideo code is licensed under the GNU GPL, version 3 only (`GPL-3.0-only`). Keep the applicable notices when redistributing copies and make corresponding source available as required when distributing binaries. [License](LICENSE) · [Copyright](COPYRIGHT.md) · [Third-party notices](THIRD_PARTY_NOTICES.md)

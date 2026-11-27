@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from bisect import bisect_right
+from bisect import bisect_left, bisect_right
 from dataclasses import dataclass, replace
+from difflib import SequenceMatcher
 import html
 from io import BytesIO
 import json
@@ -11,9 +12,11 @@ import re
 import subprocess
 import sys
 import tempfile
+import wave
 
 from PIL import Image, ImageDraw, ImageFont
 
+from caption_layout import keep_with_next, wrap_words
 from i18n import tr
 from media_files import commit_new_file
 from video_ad_inserter_core import PAD_TO_EVEN
@@ -22,6 +25,11 @@ from video_ad_inserter_core import PAD_TO_EVEN
 FONTS = {'Noto Sans': 'NotoSans', 'Inter': 'Inter', 'Montserrat': 'Montserrat',
          'Roboto Condensed': 'RobotoCondensed'}
 VAD_MODEL_NAME = 'ggml-silero-v5.1.2.bin'
+SMALL_MODEL_NAME = 'ggml-small.bin'
+LARGE_MODEL_NAME = 'ggml-large-v3.bin'
+_CAPTION_HOLD_MS = 800
+_TRANSCRIPTION_CHUNK_MS = 480_000
+_TRANSCRIPTION_OVERLAP_MS = 4_000
 _STAMP = r'\d+:\d{2}:\d{2}[,.]\d{3}'
 _WIN_FLAGS = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
 _SOUND_MARKER = re.compile(r'[♪♫♬♩][^♪♫♬♩]*[♪♫♬♩]|[\[(]([^\])\n]+)[\])]')
@@ -35,6 +43,10 @@ _SOUND_LABELS = {
     'тишина', 'тиша', 'silence',
 }
 _SOUND_WORD = re.compile(r'([аоеэуиім])(?:[-–—]?\1)*|[аоуэе]+х+|х+м+|(?:х[аеи][-–—]?)+')
+_VAD_SPAN = re.compile(
+    rb'vad_segment_info: orig_start: (\d+\.\d+), orig_end: (\d+\.\d+), '
+    rb'vad_start: (\d+\.\d+), vad_end: (\d+\.\d+)'
+)
 
 
 @dataclass(frozen=True)
@@ -44,6 +56,14 @@ class Cue:
     text: str
     word_starts: tuple[int, ...] = ()
     position: tuple[float, float] | None = None
+
+
+@dataclass(frozen=True)
+class _SpeechSpan:
+    start: int
+    end: int
+    compressed_start: int
+    compressed_end: int
 
 
 @dataclass(frozen=True)
@@ -107,6 +127,20 @@ def word_starts(cue: Cue):
     return tuple(cue.start + (cue.end - cue.start) * index // count for index in range(count))
 
 
+def hold_captions(cues, duration_ms=None):
+    result = []
+    for index, cue in enumerate(cues):
+        end = cue.end + _CAPTION_HOLD_MS
+        if duration_ms is not None:
+            end = min(end, duration_ms)
+        if index + 1 < len(cues):
+            end = min(end, cues[index + 1].start)
+        if end > cue.end:
+            cue = replace(cue, end=end, word_starts=word_starts(cue))
+        result.append(cue)
+    return result
+
+
 class CaptionPainter:
     def __init__(self, style, frame_size):
         self.style = style
@@ -124,27 +158,25 @@ class CaptionPainter:
         return font
 
     def layout(self, cue):
-        words = cue.text.split()
         font = self.font
-        pad = max(self.stroke + 2, self.scale // 4)
-        available = max(1, self.limit - pad * 2)
-        line_space = max(2, self.scale // 7)
+        preferred_rows = max(2, sum(bool(line.strip()) for line in cue.text.splitlines()))
+        preferred_min_size = max(9, round(self.scale * .72))
         while True:
-            rows, row = [], []
-            for index, word in enumerate(words):
-                if row and font.getlength(' '.join(words[item] for item in (*row, index))) > available:
-                    rows.append(row)
-                    row = []
-                row.append(index)
-            if row:
-                rows.append(row)
+            pad = max(self.stroke + 2, font.size // 4)
+            line_space = max(2, font.size // 7)
+            available = max(1, self.limit - pad * 2)
+            words, rows = wrap_words(cue.text, available, font.getlength)
             widths = [font.getlength(' '.join(words[index] for index in row)) for row in rows]
             ascent, descent = font.getmetrics()
-            height = (ascent + descent + line_space) * len(rows) - line_space + 2 * pad
-            if (max(widths) <= available and height <= self.height) or font.size <= 9:
+            height = (ascent + descent + line_space) * max(1, len(rows)) - line_space + 2 * pad
+            fits = max(widths, default=0) <= available and height <= self.height
+            if fits and (len(rows) <= preferred_rows or font.size <= preferred_min_size):
                 break
-            font = self._font(max(9, font.size * 9 // 10))
-        width = min(self.width, round(max(widths)) + 2 * pad)
+            if font.size == 1:
+                break
+            next_size = max(1, font.size * 9 // 10)
+            font = self._font(max(preferred_min_size, next_size) if fits else next_size)
+        width = min(self.width, round(max(widths, default=0)) + 2 * pad)
         height = min(self.height, height)
         px, py = cue.position or (self.style.x, self.style.y)
         left = max(0, min(self.width - width, round(self.width * px / 100 - width / 2)))
@@ -326,29 +358,315 @@ def _speech_cues(cues):
     return result
 
 
-def transcribe(ffmpeg, source, whisper, model, language, cancel, notify, *, vad_model=None):
-    if language not in ('ru', 'uk'):
+def _sentence_end(word):
+    word = word.rstrip('»”"’)]')
+    if word.endswith(('?', '!', '…', '...')):
+        return True
+    if not word.endswith('.'):
+        return False
+    return word in ('Я.', 'я.') or not re.fullmatch(r'(?:[^\W\d_]\.)+', word)
+
+
+def _phrase_cues(words):
+    cursor = 0
+    while cursor < len(words):
+        first = cursor
+        length = 0
+        soft_boundary = first
+        sentence_end = False
+        while cursor < len(words):
+            word, _start, end = words[cursor]
+            if cursor > first and (length + len(word) + 1 > 72 or end - words[first][1] > 6000):
+                break
+            length += len(word) + 1
+            cursor += 1
+            sentence_end = _sentence_end(word)
+            if sentence_end:
+                break
+            if length >= 30 and word.endswith((',', ';', ':')):
+                soft_boundary = cursor
+
+        if cursor < len(words) and not sentence_end:
+            if soft_boundary > first:
+                cursor = soft_boundary
+            while cursor > first + 1 and keep_with_next(words[cursor - 1][0]):
+                cursor -= 1
+
+        block = words[first:cursor]
+        start, end = block[0][1], block[-1][2]
+        timings = tuple(word[1] for word in block)
+        if any(a >= b for a, b in zip(timings, timings[1:])) or timings[-1] >= end:
+            timings = ()
+        yield Cue(start, max(start + 1, end), ' '.join(word[0] for word in block), timings)
+
+
+def regroup_captions(cues):
+    result = []
+    words = []
+    previous_end = None
+    for cue in cues:
+        if previous_end is not None and not 0 <= cue.start - previous_end <= 350:
+            result.extend(_phrase_cues(words))
+            words.clear()
+        starts = (cue.start, *word_starts(cue)[1:])
+        ends = (*starts[1:], cue.end)
+        words.extend(zip(cue.text.split(), starts, ends))
+        previous_end = cue.end
+    result.extend(_phrase_cues(words))
+    return result
+
+
+def _extract_transcription_audio(ffmpeg, source, directory, cancel, start_ms, end_ms):
+    args = [ffmpeg, '-v', 'error', '-nostdin', '-y']
+    if start_ms:
+        args += ['-ss', f'{start_ms / 1000:.3f}']
+    args += ['-i', str(source), '-map', '0:a:0', '-vn', '-af', 'aresample=async=1:first_pts=0',
+             '-ac', '1', '-ar', '16000', '-c:a', 'pcm_s16le']
+    if end_ms is not None:
+        args += ['-t', f'{(end_ms - start_ms) / 1000:.3f}']
+    if not _wait_process(args + ['speech.wav'], directory, cancel):
+        return None
+    with wave.open(str(directory / 'speech.wav'), 'rb') as audio:
+        return round(audio.getnframes() * 1000 / audio.getframerate())
+
+
+def _speech_spans(log_path):
+    spans = []
+    with log_path.open('rb') as log:
+        for line in log:
+            match = _VAD_SPAN.search(line)
+            if match:
+                start, end, compressed_start, compressed_end = (round(float(value) * 1000) for value in match.groups())
+                if start < end and compressed_start < compressed_end:
+                    spans.append(_SpeechSpan(start, end, compressed_start, compressed_end))
+    return spans
+
+
+def _token_timed_words(segment, expected_words):
+    positions, tokens = [], []
+    length = 0
+    for token in segment.get('tokens', ()):
+        text = token['text']
+        if text and not (text.startswith('[_') and text.endswith(']')):
+            positions.append(length)
+            tokens.append(token)
+            length += len(text)
+    joined = ''.join(token['text'] for token in tokens)
+    if joined.split() != expected_words:
+        return []
+    result = []
+    for word in re.finditer(r'\S+', joined):
+        first = bisect_right(positions, word.start()) - 1
+        last = bisect_left(positions, word.end())
+        timed_tokens = [token for token in tokens[first:last] if 'offsets' in token]
+        lexical = [token for token in timed_tokens if any(char.isalnum() for char in token['text'])]
+        timed = [token['offsets'] for token in lexical or timed_tokens]
+        if not timed or not 0 <= timed[0]['from'] <= timed[-1]['to']:
+            return []
+        result.append((word.group(), timed[0]['from'], timed[-1]['to']))
+    return result
+
+
+def _word_in_speech_span(word, begin, end, spans, compressed_starts):
+    midpoint = (begin + end) // 2
+    index = max(0, bisect_right(compressed_starts, midpoint) - 1)
+    span = spans[index]
+    if index + 1 < len(spans):
+        following = spans[index + 1]
+        if midpoint - span.compressed_end > following.compressed_start - midpoint:
+            span = following
+    width = span.end - span.start
+    compressed_width = span.compressed_end - span.compressed_start
+    start = max(span.start, min(span.end - 1, span.start + (begin - span.compressed_start) * width // compressed_width))
+    stop = min(span.end, max(start + 120, span.start + (end - span.compressed_start) * width // compressed_width))
+    return Cue(min(start, max(span.start, stop - 120)), stop, word)
+
+
+def _approximate_vad_words(cue, spans):
+    overlapping = [(max(cue.start, span.start), min(cue.end, span.end)) for span in spans
+                   if span.start < cue.end and span.end > cue.start]
+    if not overlapping:
+        nearest = min(spans, key=lambda span: max(span.start - cue.end, cue.start - span.end))
+        overlapping = [(nearest.start, nearest.end)]
+    active, elapsed = [], 0
+    for start, end in overlapping:
+        active.append(_SpeechSpan(start, end, elapsed, elapsed + end - start))
+        elapsed += end - start
+    words = cue.text.split()
+    starts = [span.compressed_start for span in active]
+    return [_word_in_speech_span(word, index * elapsed // len(words), (index + 1) * elapsed // len(words), active, starts)
+            for index, word in enumerate(words)]
+
+
+def _vad_cues(document, log_path):
+    spans = _speech_spans(log_path)
+    if not spans:
+        return _speech_cues(_whisper_cues(document))
+    starts = [span.compressed_start for span in spans]
+    cues = []
+    for segment in document.get('transcription', ()):
+        start, end = segment['offsets']['from'], segment['offsets']['to']
+        if end <= start:
+            continue
+        clean = _speech_cues([Cue(start, end, segment['text'].strip())])
+        if not clean:
+            continue
+        words = _token_timed_words(segment, clean[0].text.split())
+        if words:
+            cues.extend(_word_in_speech_span(word, begin, end, spans, starts) for word, begin, end in words)
+        else:
+            cues.extend(_approximate_vad_words(clean[0], spans))
+    return cues
+
+
+def _recognize_audio(directory, whisper, model, language, cancel, vad_model, progress):
+    result = directory / 'captions.json'
+    result.unlink(missing_ok=True)
+    model_name = Path(model).name
+    args = [str(whisper), '-m', str(model), '-f', 'speech.wav', '-l', language,
+            '-of', 'captions', '-ojf', '-ml', '54', '-sow', '-ng', '-pp']
+    if vad_model is None:
+        preset = {SMALL_MODEL_NAME: 'small', LARGE_MODEL_NAME: 'large.v3'}.get(model_name, 'base')
+        args += ['-dtw', preset]
+    else:
+        args += ['--vad', '--vad-model', str(vad_model), '--suppress-nst']
+        if model_name == LARGE_MODEL_NAME:
+            args += ['--vad-threshold', '0.42', '--vad-min-speech-duration-ms', '125',
+                     '--vad-min-silence-duration-ms', '180', '--vad-speech-pad-ms', '160']
+        else:
+            args += ['--vad-threshold', '0.55', '--vad-min-speech-duration-ms', '180', '--vad-speech-pad-ms', '100']
+    if not _wait_process(args, directory, cancel, progress):
+        return None
+    document = json.loads(result.read_text(encoding='utf-8-sig'))
+    cues = _whisper_cues(document) if vad_model is None else _vad_cues(document, directory / 'process.log')
+    detected = document.get('result', {}).get('language') if language == 'auto' else language
+    return cues, detected
+
+
+def _chunk_words(cues, offset, length):
+    for cue in cues:
+        start, end = max(0, cue.start), min(length, cue.end)
+        if not cue.text.strip() or start >= end:
+            continue
+        timings = cue.word_starts if all(start <= time < end for time in cue.word_starts) else ()
+        cue = replace(cue, start=start, end=end, word_starts=timings)
+        starts = (start, *word_starts(cue)[1:])
+        ends = (*starts[1:], end)
+        yield from ((word, offset + begin, offset + stop)
+                    for word, begin, stop in zip(cue.text.split(), starts, ends))
+
+
+def _word_midpoint(word):
+    return (word[1] + word[2]) // 2
+
+
+def _overlap_anchor(left, right, boundary):
+    start = bisect_left(left, boundary - _TRANSCRIPTION_OVERLAP_MS, key=_word_midpoint)
+    end = bisect_right(right, boundary + _TRANSCRIPTION_OVERLAP_MS, key=_word_midpoint)
+    left_text = [re.sub(r'[^\w]', '', word[0].casefold()).replace('ё', 'е') for word in left[start:]]
+    right_text = [re.sub(r'[^\w]', '', word[0].casefold()).replace('ё', 'е') for word in right[:end]]
+    candidates = []
+    for block in SequenceMatcher(None, left_text, right_text, autojunk=False).get_matching_blocks():
+        for index in range(block.size):
+            left_index, right_index = block.a + index + start, block.b + index
+            left_time = _word_midpoint(left[left_index])
+            right_time = _word_midpoint(right[right_index])
+            word = right_text[right_index]
+            if not word or abs(left_time - right_time) > 1_250:
+                continue
+            if block.size == 1 and (len(word) < 4 or left_text.count(word) != 1 or right_text.count(word) != 1):
+                continue
+            proximity = abs((left_time + right_time) // 2 - boundary)
+            candidates.append((proximity, -block.size, abs(left_time - right_time), left_index, right_index))
+    if candidates:
+        return min(candidates)[-2:]
+    return None
+
+
+def _stitch_transcription(left, right, boundary):
+    if left and right and left[-1][2] > right[0][1]:
+        anchor = _overlap_anchor(left, right, boundary)
+        if anchor is None:
+            left_limit = max(boundary, right[0][1])
+            right_limit = min(boundary, left[-1][2])
+            anchor = (bisect_left(left, left_limit, key=_word_midpoint),
+                      bisect_left(right, right_limit, key=_word_midpoint))
+        left_index, right_index = anchor
+        del left[left_index:]
+        right = right[right_index:]
+    left.extend(right)
+
+
+def _joined_phrases(words):
+    run = []
+    previous = None
+    for text, start, end in words:
+        if previous is not None:
+            old_text, old_start, old_end = previous
+            start = max(old_start + 1, start)
+            run.append((old_text, old_start, min(old_end, start)))
+            if start - old_end > 350:
+                yield from _phrase_cues(run)
+                run.clear()
+        previous = (text, start, max(start + 1, end))
+    if previous is not None:
+        run.append(previous)
+        yield from _phrase_cues(run)
+
+
+def _transcription_progress(notify, index, count, core_start, core_length, total):
+    last = -1
+
+    def progress(log_path):
+        nonlocal last
+        with log_path.open('rb') as reader:
+            reader.seek(max(0, log_path.stat().st_size - 2048))
+            matches = re.findall(rb'progress\s*=\s*(\d+)\s*%', reader.read(2048))
+        if matches:
+            local_percent = min(100, int(matches[-1]))
+            percent = min(99, (core_start * 100 + core_length * local_percent) // total) if total else min(99, local_percent)
+            if percent > last:
+                last = percent
+                notify(tr('Распознавание речи: {0}% ({1}/{2})').format(percent, index, count))
+
+    return progress
+
+
+def transcribe(ffmpeg, source, whisper, model, language, cancel, notify, *, vad_model=None, duration=None, on_language=None):
+    if language not in ('auto', 'ru', 'uk'):
         raise ValueError(language)
+    source = Path(source).resolve()
+    total = None if duration is None else max(1, round(duration * 1000))
+    starts = range(0, total or 1, _TRANSCRIPTION_CHUNK_MS)
+    words = []
     with tempfile.TemporaryDirectory(prefix='jetvideo-whisper-') as folder:
         directory = Path(folder)
-        notify(tr('Подготовка звука…'))
-        args = [ffmpeg, '-v', 'error', '-nostdin', '-i', str(Path(source).resolve()), '-map', '0:a:0',
-                '-vn', '-ac', '1', '-ar', '16000', '-c:a', 'pcm_s16le', 'speech.wav']
-        if not _wait_process(args, directory, cancel):
-            return None
-        notify(tr('Распознавание речи на компьютере…'))
-        args = [str(whisper), '-m', str(model), '-f', 'speech.wav', '-l', language,
-                '-of', 'captions', '-ml', '54', '-sow', '-ng']
-        if vad_model is None:
-            args += ['-ojf', '-dtw', 'base']
-        else:
-            args += ['-oj', '--vad', '--vad-model', str(vad_model), '--vad-threshold', '0.55',
-                     '--vad-min-speech-duration-ms', '180', '--vad-speech-pad-ms', '100', '--suppress-nst']
-        if not _wait_process(args, directory, cancel):
-            return None
-        cues = _whisper_cues(json.loads((directory / 'captions.json').read_text(encoding='utf-8-sig')))
-        if vad_model is not None:
-            cues = _speech_cues(cues)
-        if not cues:
-            raise ValueError(tr('Речь для субтитров не найдена.'))
-        return cues
+        for index, core_start in enumerate(starts, start=1):
+            if cancel.is_set():
+                return None
+            core_end = min(total, core_start + _TRANSCRIPTION_CHUNK_MS) if total else None
+            start = max(0, core_start - _TRANSCRIPTION_OVERLAP_MS)
+            end = min(total, core_end + _TRANSCRIPTION_OVERLAP_MS) if total else None
+            notify(tr('Подготовка звука ({0}/{1})…').format(index, len(starts)))
+            length = _extract_transcription_audio(ffmpeg, source, directory, cancel, start, end)
+            if length is None:
+                return None
+            if length:
+                notify(tr('Распознавание речи ({0}/{1})…').format(index, len(starts)))
+                progress = _transcription_progress(notify, index, len(starts), core_start, (core_end or 0) - core_start, total)
+                result = _recognize_audio(directory, whisper, model, language, cancel, vad_model, progress)
+                if result is None or cancel.is_set():
+                    return None
+                cues, detected = result
+                chunk = list(_chunk_words(cues, start, length))
+                if chunk and on_language is not None and detected in ('ru', 'uk'):
+                    on_language(detected)
+                    on_language = None
+                _stitch_transcription(words, chunk, core_start)
+            percent = core_end * 100 // total if total else 100
+            notify(tr('Распознавание речи: {0}% ({1}/{2})').format(percent, index, len(starts)))
+    if cancel.is_set():
+        return None
+    if not words:
+        raise ValueError(tr('Речь для субтитров не найдена.'))
+    return hold_captions(list(_joined_phrases(words)), total if total is not None else length)

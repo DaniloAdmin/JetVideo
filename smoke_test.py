@@ -424,9 +424,11 @@ def check_timezone_menu(app):
 
 def check_portable_release(report_path: Path):
     import ctypes
+    from os import environ
     import shutil
     import sys
     import time
+    from types import SimpleNamespace
 
     from PIL import Image
 
@@ -526,7 +528,11 @@ def check_portable_release(report_path: Path):
                 assert metadata.has_audio and abs(metadata.duration - duration) < .08
 
             subtitle_file = scratch / 'субтитри.srt'
-            subtitle_file.write_text('1\n00:00:00,250 --> 00:00:01,500\nЇї ґаджет знімає відео.\n', encoding='utf-8-sig')
+            subtitle_file.write_text(
+                '1\n00:00:00,250 --> 00:00:01,500\nЇї ґаджет знімає відео.\n\n'
+                '2\n00:00:01,600 --> 00:00:02,300\nОн пажалуста подождёт.\n',
+                encoding='utf-8-sig',
+            )
             captioned = scratch / 'відео з субтитрами.mp4'
             replacement = scratch / 'інше відео.mp4'
             generated = run_capture([ffmpeg, '-v', 'error', '-f', 'lavfi', '-i', 'color=blue:s=128x72:r=24:d=2.5',
@@ -535,8 +541,8 @@ def check_portable_release(report_path: Path):
                                      '-shortest', str(replacement)])
             assert generated.returncode == 0, generated.stderr
 
-            def wait_editor():
-                deadline = time.monotonic() + 25
+            def wait_editor(timeout=25):
+                deadline = time.monotonic() + timeout
                 while editor.busy and time.monotonic() < deadline:
                     app.update()
                     time.sleep(.02)
@@ -550,14 +556,17 @@ def check_portable_release(report_path: Path):
                 captions = editor.subtitle_editor
                 captions.top.geometry('640x490')
                 app.update()
-                for button in (captions.open_button, captions.transcribe_button,
-                               captions.play_button, captions.export_button):
+                for button in (captions.open_button, captions.transcribe_button, captions.spelling_button, captions.transcription_options,
+                               captions.play_button, captions.export_button, captions.add_button, captions.delete_button,
+                               captions.up_button, captions.down_button):
                     assert_inside_window(button)
+                assert captions.delete_button['state'] == 'disabled'
                 assert captions.source == video
                 assert captions.speech_only.get()
-                captions.speech_only_button.invoke()
+                speech_options = captions.transcription_options.nametowidget(captions.transcription_options['menu'])
+                speech_options.invoke('end')
                 assert not captions.speech_only.get()
-                captions.speech_only_button.invoke()
+                speech_options.invoke('end')
                 assert captions.speech_only.get()
                 captions.open_button.invoke()
                 wait_editor()
@@ -565,19 +574,63 @@ def check_portable_release(report_path: Path):
                 assert captions.source == replacement and captions.file_label.get() == replacement.name
                 assert captions.frame_size == (128, 72) and captions.image.getpixel((0, 0))[2] > 200
                 assert abs(captions.info.duration - 2.5) < .08
-                from subtitle_ui import VAD_MODEL_NAME, _whisper_tools
+                from subtitle_ui import LARGE_MODEL_NAME, VAD_MODEL_NAME, _whisper_tools
                 whisper = _whisper_tools()
                 speech_checked = whisper is not None and whisper[1].with_name(VAD_MODEL_NAME).is_file()
+                large_checked = speech_checked and whisper[1].name == LARGE_MODEL_NAME
+                one_click_checked = False
                 if speech_checked:
+                    assert captions.quality.get() == whisper[1].name
+                    assert captions.language.get() == tr('Автоопределение')
                     captions.transcribe_button.invoke()
                     wait_editor()
                     subtitle_errors.assert_called_once_with(APP_NAME, tr('Речь для субтитров не найдена.'), parent=captions.top)
                     assert not captions.cues
                     subtitle_errors.reset_mock()
+                if speech_checked and (speech_path := environ.get('JETVIDEO_QA_SPEECH')):
+                    captions.source = None
+                    choose_file.return_value = speech_path
+                    captions.transcribe_button.invoke()
+                    wait_editor(90)
+                    assert captions.source == Path(speech_path)
+                    assert captions.language.get() == tr('Автоопределение')
+                    assert captions.detected_language == 'ru'
+                    words = ' '.join(cue.text for cue in captions.cues).casefold()
+                    if large_checked:
+                        assert 'петя открыл рюкзак' in words and 'оказалось' in words, words
+                    else:
+                        assert 'рюкзак' in words, words
+                    choose_file.return_value = str(replacement)
+                    captions.open_button.invoke()
+                    wait_editor()
+                    one_click_checked = True
                 choose_file.return_value = str(subtitle_file)
                 captions.import_button.invoke()
                 wait_editor()
                 assert captions.cues[0].text == 'Її ґаджет знімає відео.'
+                captions.listing.selection_set('1')
+                app.update()
+                captions.spelling_button.invoke()
+                wait_editor()
+                assert 'пажалуста' in [issue.word for issue in captions.spelling_issues[1]]
+                assert captions.text.tag_ranges('spelling')
+                point = captions.text.bbox('1.3')
+                assert point is not None
+                with patch.object(captions.spelling_popup, 'tk_popup') as popup:
+                    captions.spelling_menu(SimpleNamespace(x=point[0] + 2, y=point[1] + 2, x_root=50, y_root=50))
+                    wait_editor()
+                    popup.assert_called_once()
+                correction = next(index for index in range(captions.spelling_popup.index('end') + 1)
+                                  if captions.spelling_popup.entrycget(index, 'label') == 'пожалуйста')
+                captions.spelling_popup.invoke(correction)
+                assert captions.cues[1].text == 'Он пожалуйста подождёт.'
+                assert (captions.cues[1].start, captions.cues[1].end) == (1600, 2300)
+                assert captions.options_menu.entrycget(captions.hold_option, 'state') == 'normal'
+                captions.options_menu.invoke(captions.hold_option)
+                assert [cue.end for cue in captions.cues] == [1600, round(captions.info.duration * 1000)]
+                assert captions.options_menu.entrycget(captions.hold_option, 'state') == 'disabled'
+                captions.listing.selection_set('0')
+                app.update()
                 captions.font.set('Montserrat')
                 captions.y.set('24')
                 captions.highlight.set(True)
@@ -604,7 +657,204 @@ def check_portable_release(report_path: Path):
                 assert captioned_info.has_audio and (captioned_info.width, captioned_info.height) == (128, 72)
                 captions.cut_button.invoke()
                 assert editor.video_files == [str(captioned)]
+
+                captions.show()
+                captions.listing.selection_set('0')
+                app.update()
+                captions.text.focus_force()
+                captions.text.mark_set('insert', '1.0')
+                app.update()
+                captions.text.event_generate('<KeyPress-Delete>')
+                assert captions.text.get('1.0', 'end-1c') == 'ї ґаджет знімає відео.'
+                assert captions.cues[0].text == 'Її ґаджет знімає відео.' and len(captions.cues) == 2
+
+                remaining = captions.cues[1]
+                timing = remaining.start, remaining.end
+                captions.listing.focus_force()
+                app.update()
+                captions.listing.event_generate('<KeyPress-Delete>')
+                app.update()
+                assert captions.cues == [remaining] and captions.starts == [remaining.start]
+                assert (captions.cues[0].start, captions.cues[0].end) == timing
+                assert captions.listing.selection() == ('0',)
+                assert captions.text.get('1.0', 'end-1c') == remaining.text
+                assert captions.result is None and captioned.is_file()
+
+                assert captions.delete_button['state'] == 'normal'
+                captions.delete_button.invoke()
+                app.update()
+                assert not captions.cues and not captions.starts and not captions.listing.get_children()
+                assert captions.text.get('1.0', 'end-1c') == ''
+                assert captions.canvas.itemcget(captions.caption_item, 'state') == 'hidden'
+                assert captions.delete_button['state'] == 'disabled'
+
+                def start_phrase(start, end, phrase):
+                    captions.add_button.invoke()
+                    app.update()
+                    dialog = captions.top.children['new_phrase']
+                    widgets = {}
+                    pending = dialog.winfo_children()
+                    while pending:
+                        widget = pending.pop()
+                        key = ('save' if widget.winfo_class() == 'Button' and widget['text'] == tr('Сохранить')
+                               else widget.winfo_name())
+                        widgets[key] = widget
+                        pending.extend(widget.winfo_children())
+                    for field, value in (('start', start), ('end', end)):
+                        widgets[field].delete(0, 'end')
+                        widgets[field].insert(0, value)
+                    widgets['phrase'].insert('1.0', phrase)
+                    return dialog, widgets
+
+                assert captions.up_button['state'] == captions.down_button['state'] == 'disabled'
+                dialog, fields = start_phrase('00:00,800', '0.7', '')
+                fields['phrase'].insert('1.0', 'Друга фраза')
+                fields['save'].invoke()
+                assert dialog.winfo_exists() and not captions.cues
+                fields['end'].delete(0, 'end')
+                fields['end'].insert(0, '1.9')
+                fields['phrase'].delete('1.0', 'end')
+                fields['save'].invoke()
+                assert dialog.winfo_exists() and not captions.cues
+                fields['phrase'].insert('1.0', 'Друга фраза')
+                fields['save'].invoke()
+                app.update()
+                assert not dialog.winfo_exists()
+                assert captions.listing.selection() == ('0',)
+                assert captions.up_button['state'] == captions.down_button['state'] == 'disabled'
+
+                dialog, fields = start_phrase('0.125', '00:00,650', 'Перша фраза')
+                fields['save'].invoke()
+                app.update()
+                assert not dialog.winfo_exists() and app.grab_current() is captions.top
+                assert captions.listing.selection() == ('0',)
+                assert captions.time.get() == .125
+                assert [cue.text for cue in captions.cues] == ['Перша фраза', 'Друга фраза']
+                slots = [(125, 650), (800, 1900)]
+                assert [(cue.start, cue.end) for cue in captions.cues] == slots
+                assert captions.up_button['state'] == 'disabled' and captions.down_button['state'] == 'normal'
+                captions.local_position.set(True)
+                x, y, width, height = captions.video_box
+                captions.move_caption(SimpleNamespace(x=x + .25 * width, y=y + .5 * height))
+                captions.local_position.set(False)
+
+                captions.down_button.invoke()
+                app.update()
+                assert [cue.text for cue in captions.cues] == ['Друга фраза', 'Перша фраза']
+                assert [(cue.start, cue.end) for cue in captions.cues] == slots and captions.starts == [125, 800]
+                assert [cue.position for cue in captions.cues] == [None, (25.0, 50.0)]
+                assert captions.listing.selection() == ('1',) and captions.time.get() == .8
+                assert captions.down_button['state'] == 'disabled' and captions.up_button['state'] == 'normal'
+                captions.up_button.invoke()
+                app.update()
+                assert [cue.text for cue in captions.cues] == ['Перша фраза', 'Друга фраза']
+                assert [(cue.start, cue.end) for cue in captions.cues] == slots
+                assert captions.listing.selection() == ('0',)
+
+                edited_srt = scratch / 'ручні субтитри.srt'
+                with patch('subtitle_ui.filedialog.asksaveasfilename', return_value=str(edited_srt)):
+                    captions.save_srt()
+                from subtitles import read_srt
+                assert [(cue.start, cue.end, cue.text) for cue in read_srt(edited_srt)] == [
+                    (125, 650, 'Перша фраза'), (800, 1900, 'Друга фраза'),
+                ]
                 subtitle_errors.assert_not_called()
+
+            from guide_ui import GuideWindow
+            from music_check import MusicMatch, MusicResult
+            from publisher_ui import ENV_KEYS, parse_env, save_env
+
+            app.show('publisher')
+            publisher = app.publisher
+            publisher.switch('dashboard')
+            app.update()
+            actions = publisher.dashboard_actions
+            assert actions.winfo_viewable()
+            assert all(widget.cget('text').strip() != tr('Проверить музыку')
+                       for widget in actions.master.winfo_children() if widget.winfo_class() == 'Button')
+            menu = actions.nametowidget(actions.cget('menu'))
+            music_item = next(index for index in range(menu.index('end') + 1)
+                              if menu.type(index) == 'command'
+                              and menu.entrycget(index, 'label') == tr('Проверить музыку'))
+            env_path = publisher.workspace_dir / '.env'
+            fake_keys = {key: 'test-only' for key, _ in ENV_KEYS}
+            fake_keys.update(R2_ENDPOINT='https://r2.example.invalid', R2_PUBLIC_BASE_URL='https://media.example.invalid')
+            save_env(env_path, fake_keys)
+            ready = publisher._folder('videos_folder', 'ready')
+            shutil.copy2(video, ready / 'Песня.mp4')
+            shutil.copy2(rendered[0], ready / 'Без совпадений.mp4')
+
+            menu.invoke(music_item)
+            app.update()
+            music_dialog = publisher.children['music_settings']
+            form = music_dialog.children['credentials']
+            token = form.grid_slaves(row=0, column=1)[0]
+            container = form.grid_slaves(row=2, column=1)[0]
+            token.insert(0, 'music-test-only')
+            container.insert(0, '123')
+            next(widget for widget in music_dialog.winfo_children() if widget.winfo_class() == 'Checkbutton').invoke()
+
+            help_button = next(
+                widget for parent in (music_dialog, *music_dialog.winfo_children())
+                for widget in parent.winfo_children()
+                if widget.winfo_class() == 'Button' and widget['text'].strip() == tr('Справка')
+            )
+            help_button.invoke()
+            app.update()
+            music_guide = next(widget for widget in music_dialog.winfo_children() if isinstance(widget, GuideWindow))
+            assert music_guide.winfo_viewable() and music_guide.document == music_guide.readme
+            section = music_guide.anchor_sections['music-check']
+            assert music_guide.contents.current() == section
+            title, start = music_guide.sections[section]
+            assert title.startswith('Проверка музыки') and music_guide.text.dlineinfo(start)
+            end = music_guide.sections[section + 1][1] if section + 1 < len(music_guide.sections) else 'end'
+            instructions = music_guide.text.get(start, end)
+            assert 'read-filescanning' in instructions and 'write-filescanning' in instructions
+            assert not music_guide.text.dump(start, end, window=True, image=True)
+            music_guide.destroy()
+            app.update()
+            assert music_dialog.winfo_viewable() and app.grab_current() is music_dialog
+            assert token.get() == 'music-test-only' and container.get() == '123'
+            assert not parse_env(env_path).get('ACRCLOUD_TOKEN')
+
+            scan_button = next(
+                widget for frame in music_dialog.winfo_children() for widget in frame.winfo_children()
+                if widget.winfo_class() == 'Button' and widget['text'] == tr('Проверить ready')
+            )
+            detections = []
+
+            def recognise(path, _stop):
+                detections.append(path.name)
+                if path.name == 'Песня.mp4':
+                    return MusicResult(matches=(MusicMatch('Тестовый трек', 'Исполнитель', 350, 1450),))
+                return MusicResult()
+
+            def wait_for_music(worker, expected, *, timeout=15):
+                deadline = time.monotonic() + timeout
+                while time.monotonic() < deadline:
+                    app.update()
+                    if not worker.is_alive() and expected in publisher.status_var.get():
+                        return
+                    time.sleep(.02)
+                raise AssertionError(publisher.status_var.get())
+
+            with patch('music_preflight.MusicScanner.scan', side_effect=recognise), \
+                 patch('bot.Bot.resolve', side_effect=AssertionError('Buffer reached')) as buffer_resolve:
+                scan_button.invoke()
+                wait_for_music(publisher.worker, 'С совпадениями: 1')
+                stored = parse_env(env_path)
+                assert all(stored[key] == value for key, value in fake_keys.items())
+                assert stored['ACR_CHECK_WATCH'] == '1' and stored['ACRCLOUD_CONTAINER_ID'] == '123'
+                publisher.start_watch()
+                wait_for_music(publisher.watch_worker, tr('WATCH остановлен проверкой музыки.'))
+                assert publisher.watch_stop.is_set()
+                buffer_resolve.assert_not_called()
+            assert sorted(detections) == sorted(['Без совпадений.mp4', 'Песня.mp4'])
+            log = publisher.log_box.get('1.0', 'end')
+            assert 'Песня.mp4 · Найдена музыка · 00:00:00.350–00:00:01.450 · Исполнитель — Тестовый трек' in log
+            assert 'Без совпадений.mp4 · Совпадений нет' in log
+            assert len(list(ready.glob('*.mp4'))) == 2
+            assert read_json(publisher.root_dir / 'state.json', {}) == {'items': {}}
 
             report = {'ok': True, 'version': VERSION, 'embedded_python': Path(runtime_path.value).name,
                       'system_path_only': True, 'empty_settings': True, 'workspace': 'JetVideo Data/data',
@@ -613,7 +863,10 @@ def check_portable_release(report_path: Path):
                       'rendered': [path.name for path in rendered], 'png_banner': True, 'audio': True,
                       'keyframe_parts': [path.name for path in copied], 'subtitles': True,
                       'subtitle_video_replacement': True, 'subtitle_playback': playback_checked,
-                      'subtitle_speech_filter': speech_checked}
+                      'subtitle_speech_filter': speech_checked,
+                      'subtitle_large_model': large_checked, 'subtitle_one_click_speech': one_click_checked,
+                      'subtitle_spelling': True, 'subtitle_import_hold': True, 'subtitle_deletion': True,
+                      'subtitle_manual_cues': True, 'music_check_watch_stop': True, 'music_help': True}
     finally:
         app.destroy()
     report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8')

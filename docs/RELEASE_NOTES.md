@@ -1,23 +1,23 @@
-**[Download JetVideo 1.1.0 for Windows x64](https://github.com/DaniloAdmin/JetVideo/releases/download/v1.1.0/JetVideo-1.1.0-Windows-x64.zip).** Extract the entire ZIP and open `JetVideo.exe` on 64-bit Windows 10 or 11. The portable build includes FFmpeg, FFprobe and Whisper with both subtitle models.
+**[Download JetVideo 1.1.1 for Windows x64](https://github.com/DaniloAdmin/JetVideo/releases/download/v1.1.1/JetVideo-1.1.1-Windows-x64.zip).** Extract the ZIP and open `JetVideo.exe` on 64-bit Windows 10 or 11. This portable build includes FFmpeg, FFprobe, Whisper Base and the Silero speech filter. The Windows download contains everything needed for video editing and local subtitles.
+
+JetVideo splits long videos into numbered clips, adds timed banners, and schedules TikTok posts through Buffer and Cloudflare R2. Editing and subtitles run locally. To publish, connect your TikTok channel in Buffer and enter the Buffer and R2 settings under **Publishing → Connections**.
 
 ## What's new
 
-- **Dark interface with clearer navigation.** Icon tabs, short transitions, separate subtitle editing and styling tabs, and more room for posting history in smaller windows.
-- **Offline Russian and Ukrainian subtitles.** Transcribe speech or import an SRT. Preview the video with sound, correct phrases, adjust placement and style, then save an SRT or export an MP4 with subtitles in the picture. The default speech filter skips sections without detected speech and removes standalone fillers. Singing or very quiet speech can still be misclassified.
-- **Fast splitting without re-encoding.** With banners off, keyframe mode copies video and audio into numbered clips. Clip lengths depend on keyframe spacing. Use regular splitting for exact timing or to add timed banners.
-
-Editing works without an account. To schedule posts, connect a TikTok channel in Buffer and configure a Cloudflare R2 bucket in **Publishing → Connections**. The app includes illustrated setup help in English, Ukrainian and Russian, available with **F1**.
+- **Subtitle editing.** Add phrases with their own timing, delete phrases, move them between adjacent time slots, and check Russian or Ukrainian spelling. Automatic subtitles keep each completed phrase on screen briefly so it is easier to read.
+- **Optional music check.** Open **Publishing → Dashboard → More actions → Check music** to scan the ready folder through ACRCloud. When enabled for WATCH, a match or incomplete scan stops the batch before submission. The activity log shows track names and available timecodes.
+- **Setup help.** The music check's **Help** button opens step-by-step ACRCloud setup instructions inside JetVideo.
 
 [English guide](https://github.com/DaniloAdmin/JetVideo/blob/main/README.md) · [Українська](https://github.com/DaniloAdmin/JetVideo/blob/main/README.uk.md) · [Русский](https://github.com/DaniloAdmin/JetVideo/blob/main/README.ru.md)
 
 ## License and sources
 
-JetVideo is distributed under GNU GPLv3. Copyright © 2026 axegaoo. FFmpeg and FFprobe 9.1 are included as separately invoked programs. The notices in the ZIP list the licenses of bundled components.
+JetVideo is distributed under GNU GPLv3. Copyright © 2026 axegaoo. The Windows ZIP includes component licenses. The source archives and checksums are separate downloads below.
 
 | Asset | Contents |
 | --- | --- |
-| `JetVideo-1.1.0-Windows-x64.zip` | Portable Windows application with FFmpeg, FFprobe and offline subtitles |
-| `JetVideo-1.1.0-source.zip` | JetVideo source and build scripts |
-| `FFmpeg-JetVideo-v1.1.0-source.zip` | Corresponding FFmpeg source, build script, configuration, and hashes |
-| `JetVideo-1.1.0-dependency-sources.zip` | Python dependencies, runtime sources, and Whisper source and build instructions |
+| `JetVideo-1.1.1-Windows-x64.zip` | Portable Windows application with FFmpeg, FFprobe and Whisper Base |
+| `JetVideo-1.1.1-source.zip` | JetVideo source and build scripts |
+| `FFmpeg-JetVideo-v1.1.1-source.zip` | Corresponding FFmpeg source, build script, configuration, and hashes |
+| `JetVideo-1.1.1-dependency-sources.zip` | Dependency sources, including Whisper and build instructions |
 | `SHA256SUMS.txt` | SHA-256 checksums |

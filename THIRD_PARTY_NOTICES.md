@@ -22,14 +22,16 @@
 
 ## FFmpeg / FFprobe
 
-JetVideo запускает комплектные FFmpeg и FFprobe 9.1 из папки `tools` отдельными процессами. Для релиза они собраны из исходников под GPL версии 3 или новее. Исходники, конфигурация и скрипт сборки поставляются архивом `FFmpeg-JetVideo-v1.1.0-source.zip`. [Уведомления FFmpeg](third_party/ffmpeg/NOTICE.md)
+JetVideo запускает комплектные FFmpeg и FFprobe 9.1 из папки `tools` отдельными процессами. Для релиза они собраны из исходников под GPL версии 3 или новее. Исходники, конфигурация и скрипт сборки поставляются архивом `FFmpeg-JetVideo-v1.1.1-source.zip`. [Уведомления FFmpeg](third_party/ffmpeg/NOTICE.md)
 
 ## Автосубтитры
 
-Автосубтитры обрабатываются на компьютере отдельным процессом whisper.cpp b5907 с моделью Whisper Base. Режим «Только речь» использует Silero VAD v5.1.2. Лицензии MIT и сведения о точной сборке находятся рядом с файлами в `tools/whisper`. Исходники whisper.cpp и инструкции по сборке входят в `JetVideo-1.1.0-dependency-sources.zip`. [whisper.cpp](https://github.com/ggml-org/whisper.cpp/tree/b5907) · [OpenAI Whisper](https://github.com/openai/whisper) · [Silero VAD](https://github.com/snakers4/silero-vad/tree/v5.1.2)
+Автосубтитры обрабатываются на компьютере отдельным процессом whisper.cpp b5907 с моделью Whisper Base. Режим «Только речь» использует Silero VAD v5.1.2. Лицензии MIT и сведения о точной сборке находятся рядом с файлами в `tools/whisper`. Исходники whisper.cpp и инструкции по сборке входят в `JetVideo-1.1.1-dependency-sources.zip`. [whisper.cpp](https://github.com/ggml-org/whisper.cpp/tree/b5907) · [OpenAI Whisper](https://github.com/openai/whisper) · [Silero VAD](https://github.com/snakers4/silero-vad/tree/v5.1.2)
+
+Происхождение и контрольные суммы комплектных моделей указаны в `tools/whisper` рядом с файлами весов. Орфография проверяется библиотекой Spylls со словарями LibreOffice. [Источники и лицензии словарей и Spylls](third_party/spelling/NOTICE.md)
 
 ## Материалы и сервисы
 
 В исходники не включены пользовательские видео, изображения баннеров, прежние скриншоты аккаунтов и материалы JoJo. Значок воспроизведения JetVideo создан из простых геометрических элементов специально для приложения. Перед распространением своих видео/баннеров пользователь должен иметь права на них.
 
-Buffer, Cloudflare и TikTok — независимые сервисы со своими условиями, тарифами и лимитами. Приложение не связано с ними официально и не обещает доступ к данным или функциям вне предоставленного ими API.
+Buffer, Cloudflare, TikTok и ACRCloud — независимые сервисы со своими условиями, тарифами и лимитами. Приложение не связано с ними официально и не обещает доступ к данным или функциям вне предоставленного ими API.
