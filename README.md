@@ -4,9 +4,10 @@
 
 **JetVideo splits long videos into numbered clips, adds timed banners, and generates Russian or Ukrainian subtitles offline.** Send finished clips to a TikTok publishing queue through Buffer and Cloudflare R2.
 
-**[Download JetVideo 1.1.2 for Windows x64](https://github.com/DaniloAdmin/JetVideo/releases/download/v1.1.2/JetVideo-1.1.2-Windows-x64.zip)** · [Release notes, checksums and source archives](https://github.com/DaniloAdmin/JetVideo/releases/tag/v1.1.2)
+- **Lightweight edition (219 MiB).** Includes Whisper Base for offline subtitles. Extract the ZIP and open `JetVideo.exe`. [Download the Windows x64 ZIP](https://github.com/DaniloAdmin/JetVideo/releases/download/v1.1.2/JetVideo-1.1.2-Windows-x64.zip)
+- **Full edition.** Includes Whisper Base, Small and unquantized Large v3 for offline subtitles. Save both volumes to the same folder, open `.001` in 7-Zip, extract the archive, and run `JetVideo.exe`. [Part 1](https://github.com/DaniloAdmin/JetVideo/releases/download/v1.1.2/JetVideo-1.1.2-Windows-x64-Full.7z.001) · [Part 2](https://github.com/DaniloAdmin/JetVideo/releases/download/v1.1.2/JetVideo-1.1.2-Windows-x64-Full.7z.002) · [7-Zip](https://www.7-zip.org/)
 
-Extract the entire ZIP and run `JetVideo.exe` on 64-bit Windows 10 or 11. This lightweight package includes FFmpeg, FFprobe, Whisper Base and the Silero speech filter. The editor and its illustrated help are available in English, Ukrainian and Russian.
+Both editions include FFmpeg, FFprobe and the Silero speech filter and run on 64-bit Windows 10 or 11. The editor and its illustrated help are available in English, Ukrainian and Russian. [Release notes, checksums and source archives](https://github.com/DaniloAdmin/JetVideo/releases/tag/v1.1.2)
 
 ## What's new in 1.1.2
 
@@ -55,7 +56,7 @@ For a quick export, choose **No banners** and enable **Fast, at keyframes (appro
 
 **Speech only** is on by default. It skips audio without detected speech and removes standalone fillers such as “ах” and “ух” from automatic subtitles. Singing may still be detected as speech, and very quiet speech may be missed. Clear the checkbox to transcribe the full audio track. The bundled speech filter uses Silero. [Silero model for whisper.cpp](https://huggingface.co/ggml-org/whisper-vad/blob/main/ggml-silero-v5.1.2.bin)
 
-This lightweight build uses Whisper Base and detects the language automatically. To set it yourself, choose Russian or Ukrainian in the settings menu. Long videos are processed in sections, and subtitle timecodes refer to the original video. Progress appears at the bottom of the window.
+Whisper detects the language automatically. To set it yourself, choose Russian or Ukrainian in the settings menu. In the full edition you can choose between Base, Small and Large v3 in the same menu. Long videos are processed in sections, and subtitle timecodes refer to the original video. Progress appears at the bottom of the window.
 
 Click **Check spelling** to mark words in the selected or detected language. Right-click a marked word for suggested replacements. This works on automatic subtitles and imported SRT files. Replacing a word keeps the phrase's timecodes.
 

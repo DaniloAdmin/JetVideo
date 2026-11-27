@@ -26,9 +26,11 @@ JetVideo запускает комплектные FFmpeg и FFprobe 9.1 из п
 
 ## Автосубтитры
 
-Автосубтитры обрабатываются на компьютере отдельным процессом whisper.cpp b5907 с моделью Whisper Base. Режим «Только речь» использует Silero VAD v5.1.2. Лицензии MIT и сведения о точной сборке находятся рядом с файлами в `tools/whisper`. Исходники whisper.cpp и инструкции по сборке входят в `JetVideo-1.1.2-dependency-sources.zip`. [whisper.cpp](https://github.com/ggml-org/whisper.cpp/tree/b5907) · [OpenAI Whisper](https://github.com/openai/whisper) · [Silero VAD](https://github.com/snakers4/silero-vad/tree/v5.1.2)
+Автосубтитры обрабатываются на компьютере отдельным процессом whisper.cpp b5907. В лёгкой сборке используется Whisper Base. Полная сборка дополнительно включает Whisper Small и Large v3 в исходной точности. Режим «Только речь» в обеих сборках использует Silero VAD v5.1.2. Лицензии MIT и сведения о точной сборке находятся рядом с файлами в `tools/whisper`. Исходники whisper.cpp и инструкции по сборке входят в `JetVideo-1.1.2-dependency-sources.zip`. [whisper.cpp](https://github.com/ggml-org/whisper.cpp/tree/b5907) · [Лицензия OpenAI Whisper](https://github.com/openai/whisper/blob/main/LICENSE) · [Silero VAD](https://github.com/snakers4/silero-vad/tree/v5.1.2)
 
-Происхождение и контрольные суммы комплектных моделей указаны в `tools/whisper` рядом с файлами весов. Орфография проверяется библиотекой Spylls со словарями LibreOffice. [Источники и лицензии словарей и Spylls](third_party/spelling/NOTICE.md)
+Происхождение и контрольные суммы комплектных моделей указаны в `tools/whisper` рядом с файлами весов. Полная сборка содержит дополнительные файлы `PROVENANCE-Small.txt` и `PROVENANCE-Large-v3.txt`. [Закреплённые веса Small](https://huggingface.co/ggerganov/whisper.cpp/blob/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-small.bin) · [Закреплённые веса Large v3](https://huggingface.co/ggerganov/whisper.cpp/blob/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-large-v3.bin)
+
+Орфография проверяется библиотекой Spylls со словарями LibreOffice. [Источники и лицензии словарей и Spylls](third_party/spelling/NOTICE.md)
 
 ## Материалы и сервисы
 
