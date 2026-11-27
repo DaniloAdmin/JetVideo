@@ -4,11 +4,11 @@
 
 **JetVideo splits long videos into numbered clips, adds timed banners, and generates Russian or Ukrainian subtitles offline.** Send finished clips to a TikTok publishing queue through Buffer and Cloudflare R2.
 
-**[Download JetVideo 1.1.1 for Windows x64](https://github.com/DaniloAdmin/JetVideo/releases/download/v1.1.1/JetVideo-1.1.1-Windows-x64.zip)** · [Release notes, checksums and source archives](https://github.com/DaniloAdmin/JetVideo/releases/tag/v1.1.1)
+**[Download JetVideo 1.1.2 for Windows x64](https://github.com/DaniloAdmin/JetVideo/releases/download/v1.1.2/JetVideo-1.1.2-Windows-x64.zip)** · [Release notes, checksums and source archives](https://github.com/DaniloAdmin/JetVideo/releases/tag/v1.1.2)
 
 Extract the entire ZIP and run `JetVideo.exe` on 64-bit Windows 10 or 11. This lightweight package includes FFmpeg, FFprobe, Whisper Base and the Silero speech filter. The editor and its illustrated help are available in English, Ukrainian and Russian.
 
-## What's new in 1.1.1
+## What's new in 1.1.2
 
 - **Optional music check.** Scan the ready folder through ACRCloud from **More actions**, with an in-app setup guide and optional checks before posting.
 - **Subtitle editing.** Check Russian or Ukrainian spelling, add, delete or reorder phrases, and extend the time captions stay visible.
@@ -112,7 +112,6 @@ Stop WATCH and use **Posting history → More actions → Check Buffer** to comp
 
 Keep `state.json` and its backups. The history protects against duplicate submissions using saved part/post IDs and SHA-256 hashes for videos handled by this version. If the history is damaged, stop WATCH and restore a known-good backup.
 
-<a name="captions-and-tags"></a>
 <a name="music-check"></a>
 ## Check music before submitting
 
@@ -137,6 +136,7 @@ Keep `state.json` and its backups. The history protects against duplicate submis
 
 TikTok evaluates uploads separately. Check your rights to use the audio and video independently of the scan.
 
+<a name="captions-and-tags"></a>
 ## Captions and tags
 
 Open **Publishing → Captions and tags** for the profile you want. Write the post caption on the left and the hashtag sets on the right.
@@ -206,4 +206,4 @@ To update, stop WATCH, close JetVideo and back up your workspace and editor pref
 
 The release uses CPython 3.14.10 x64 with Tkinter. `requirements-build.lock` contains the build dependencies. Run `python -m pytest -q` for tests or `build_windows.bat` to build the EXE and run its smoke test.
 
-JetVideo 1.1.1 corresponds to the `v1.1.1` tag. Copyright © 2026 axegaoo. The JetVideo code is licensed under the GNU GPL, version 3 only (`GPL-3.0-only`). Keep the applicable notices when redistributing copies and make corresponding source available as required when distributing binaries. [License](LICENSE) · [Copyright](COPYRIGHT.md) · [Third-party notices](THIRD_PARTY_NOTICES.md)
+JetVideo 1.1.2 corresponds to the `v1.1.2` tag. Copyright © 2026 axegaoo. The JetVideo code is licensed under the GNU GPL, version 3 only (`GPL-3.0-only`). Keep the applicable notices when redistributing copies and make corresponding source available as required when distributing binaries. [License](LICENSE) · [Copyright](COPYRIGHT.md) · [Third-party notices](THIRD_PARTY_NOTICES.md)

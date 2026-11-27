@@ -8,8 +8,8 @@ APP_NAME = 'JetVideo | AutoPost'
 PRODUCT_NAME = 'JetVideo'
 PROJECT_NAME = 'JetVideo — Automatic Video Publisher'
 EXE_NAME = 'JetVideo.exe'
-VERSION = '1.1.1'
-RELEASE_TAG = 'v1.1.1'
+VERSION = '1.1.2'
+RELEASE_TAG = 'v1.1.2'
 
 
 def portable_home() -> Path | None:
